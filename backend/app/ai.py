@@ -52,6 +52,8 @@ RULE_SCHEMA = {
 }
 
 _client = None
+# Последняя ошибка Claude для /health: тип и код, без ключа и без текста запроса.
+last_error: str | None = None
 CACHE_PATH = os.environ.get("AI_CACHE_PATH", str(db.DB_PATH.with_name("ai_cache.db")))
 
 
@@ -77,7 +79,9 @@ def _get_client():
 def _call(system: str, user: str, schema: dict | None = None) -> str | None:
     """Один запрос к Claude. None — значит, взять шаблон."""
     client = _get_client()
+    global last_error
     if client is None:
+        last_error = "client_unavailable"
         return None
     import anthropic
 
@@ -97,23 +101,30 @@ def _call(system: str, user: str, schema: dict | None = None) -> str | None:
         )
     except anthropic.APITimeoutError:
         log.warning("Claude: таймаут %s с", C.AI_TIMEOUT_S)
+        last_error = "timeout"
         return None
     except anthropic.AuthenticationError:
         log.warning("Claude: нет или неверный ключ ANTHROPIC_API_KEY")
+        last_error = "authentication_error (401)"
         return None
     except anthropic.APIStatusError as e:
         log.warning("Claude: HTTP %s %s", e.status_code, e.message)
+        last_error = f"http_{e.status_code}: {e.message[:200]}"
         return None
     except anthropic.APIConnectionError as e:
         log.warning("Claude: нет соединения: %s", e)
+        last_error = "connection_error"
         return None
     except (TypeError, anthropic.AnthropicError) as e:
         # Например, ключ не задан: SDK падает при сборке запроса. По PRD — шаблон.
         log.warning("Claude недоступен: %s", e)
+        last_error = f"{type(e).__name__}: {str(e)[:200]}"
         return None
     if resp.stop_reason == "refusal":
         log.warning("Claude: отказ модели")
+        last_error = "refusal"
         return None
+    last_error = None
     text = "".join(b.text for b in resp.content if b.type == "text").strip()
     return text or None
 

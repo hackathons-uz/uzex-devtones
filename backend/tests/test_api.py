@@ -246,3 +246,10 @@ def test_search_delivery_matches_pool_math(client):
     cement = next(l for l in lots if l["id"] == "lot-cement")
     # 1 рейс на 20 т, как в пуле «в одиночку»: 723 000 сум / 20 т.
     assert cement["delivery_estimate"]["per_t_uzs"] == 36_150
+
+
+def test_health_does_not_leak_key(client, monkeypatch):
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-secret-value")
+    h = client.get("/health").json()
+    assert h["ai_key_present"] is True
+    assert "sk-secret-value" not in str(h)

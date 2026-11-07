@@ -3,6 +3,7 @@
 import json
 import logging
 import math
+import os
 import sqlite3
 from collections.abc import Iterator
 from datetime import date, timedelta
@@ -205,6 +206,20 @@ def guarantor_rating(conn, guarantor_id: str | None, buyer_id: str) -> int | Non
 
 
 # ---------------- Участники и лоты ----------------
+
+
+@app.get("/health")
+def health():
+    """Диагностика без секретов: виден ли ключ Claude и какой была последняя ошибка."""
+    return {
+        "ok": True,
+        "ai_key_present": bool(os.environ.get("ANTHROPIC_API_KEY")),
+        "ai_disabled": os.environ.get("AI_DISABLED") == "1",
+        "model": ai.model(),
+        "last_ai_error": ai.last_error,
+        "on_vercel": bool(os.environ.get("VERCEL")),
+        "db_path": str(db.DB_PATH),
+    }
 
 
 @app.get("/participants")
