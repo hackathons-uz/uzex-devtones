@@ -56,19 +56,27 @@ async def _validation_error(_: Request, e: RequestValidationError):
     )
 
 
-def get_conn() -> Iterator[sqlite3.Connection]:
-    with db.session() as conn:
-        yield conn
+_db_ready = False
 
 
-@app.on_event("startup")
 def _ensure_db() -> None:
+    """Схема и seed при первом запросе. На serverless событие startup не гарантировано."""
+    global _db_ready
+    if _db_ready:
+        return
     with db.session() as conn:
         db.init_schema(conn)
         if not conn.execute("SELECT 1 FROM participants LIMIT 1").fetchone():
             import seed
 
             seed.seed(conn)
+    _db_ready = True
+
+
+def get_conn() -> Iterator[sqlite3.Connection]:
+    _ensure_db()
+    with db.session() as conn:
+        yield conn
 
 
 # ---------------- Загрузка данных ----------------

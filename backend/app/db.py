@@ -7,7 +7,9 @@ from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
 
-DB_PATH = Path(os.environ.get("DB_PATH", Path(__file__).resolve().parent.parent / "data.db"))
+# На Vercel файловая система только для чтения, писать можно лишь в /tmp.
+_DEFAULT_DB = Path("/tmp/data.db") if os.environ.get("VERCEL") else Path(__file__).resolve().parent.parent / "data.db"
+DB_PATH = Path(os.environ.get("DB_PATH", _DEFAULT_DB))
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS participants (
