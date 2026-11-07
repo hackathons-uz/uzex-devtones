@@ -354,3 +354,38 @@ main { flex:1; }
   .member__act { min-width: 0; }
   .chip { height: auto; min-height: 40px; padding-top: 8px; padding-bottom: 8px; text-align: left; }
 }
+
+/* ===== Левая навигация по модулям ===== */
+.shell { display: grid; grid-template-columns: 248px minmax(0, 1fr); min-height: 100vh; }
+.side { position: sticky; top: 0; height: 100vh; overflow-y: auto; display: flex; flex-direction: column; gap: 2px; padding: 18px 14px 20px; background: var(--paper); border-right: 1px solid var(--line); }
+.side__logo { height: 40px; padding: 0 12px; margin-bottom: 6px; }
+.side__group { display: grid; gap: 2px; margin-top: 14px; }
+.side__title { padding: 0 12px 6px; font-size: 13px; font-weight: 500; color: var(--stone); letter-spacing: 0.02em; }
+.nav { display: flex; align-items: center; gap: 12px; width: 100%; height: 44px; padding: 0 12px; border: 0; border-radius: 14px; background: none; color: var(--graphite); font: 500 16px/1 var(--font); text-align: left; text-decoration: none; cursor: pointer; transition: background-color var(--dur-fast) ease, color var(--dur-fast) ease, transform var(--dur-press) var(--ease-out); }
+.nav:active { transform: scale(0.98); }
+.nav[aria-current="page"] { background: var(--canvas); color: var(--ink); box-shadow: 0 1px 2px rgb(20 20 15 / 0.06), 0 0 0 1px rgb(20 20 15 / 0.03); }
+.nav[aria-current="page"] .nav__ic { color: var(--ink); }
+.nav__ic { flex: none; display: grid; place-items: center; width: 22px; color: var(--stone); }
+.nav__l { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.nav__n { flex: none; display: grid; place-items: center; width: 22px; height: 22px; border-radius: var(--radius-pill); border: 1px solid var(--line); font-size: 12px; color: var(--graphite); }
+.nav[aria-current="page"] .nav__n { border-color: var(--ink); background: var(--ink); color: var(--canvas); }
+.nav:disabled { opacity: 0.5; cursor: progress; }
+.side__reset { margin-top: auto; }
+@media (hover:hover) and (pointer:fine) { .nav:not([aria-current="page"]):hover { background: var(--paper-2); color: var(--ink); } }
+.top { justify-content: space-between; }
+.top__title { display: flex; align-items: baseline; gap: 12px; font-size: 19px; font-weight: 500; letter-spacing: -0.02em; min-width: 0; }
+.top__step { font-size: 14px; font-weight: 500; color: var(--graphite); letter-spacing: 0; }
+@media (prefers-reduced-motion: reduce) { .nav:active { transform: none; } }
+
+/* Узкий экран: меню становится горизонтальной лентой над страницей. */
+@media (max-width: 900px) {
+  .shell { grid-template-columns: minmax(0, 1fr); }
+  .side { position: sticky; z-index: 11; height: auto; flex-direction: row; align-items: center; gap: 4px; padding: 8px 12px; overflow-x: auto; overflow-y: hidden; border-right: 0; border-bottom: 1px solid var(--line); scrollbar-width: none; }
+  .side::-webkit-scrollbar { display: none; }
+  .side__logo, .side__title { display: none; }
+  .side__group { display: flex; gap: 4px; margin: 0; }
+  .nav { width: auto; height: 40px; flex: none; }
+  .nav__l { overflow: visible; }
+  .side__reset { margin-top: 0; }
+  .top { top: 56px; }
+}
