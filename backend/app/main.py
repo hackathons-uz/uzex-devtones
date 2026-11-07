@@ -164,6 +164,7 @@ def distance_fn(conn) -> P.Distance:
 
 
 OPEN_STATUSES = ("submitted", "admitted")
+LOCKED_STATUSES = ("deposit_locked", "confirmed", "escrow_paid", "delivered", "closed")
 
 
 def open_requests(conn, lt: dict, exclude: set[str] = frozenset()) -> list[P.OpenRequest]:
@@ -225,16 +226,18 @@ def get_participant(pid: str, conn=Depends(get_conn)):
 
 
 @app.get("/lots")
-def list_lots(buyer_id: str | None = None, conn=Depends(get_conn)):
+def list_lots(buyer_id: str | None = None, qty_t: int = C.TRUCK_CAPACITY_T, conn=Depends(get_conn)):
     lots = [lot(conn, r["id"]) for r in conn.execute("SELECT id FROM lots ORDER BY id")]
     if buyer_id:
         b = participant(conn, buyer_id)
         dist = distance_fn(conn)
         for lt in lots:
             km = P.region_km(dist, lt["region"], b["region"])
-            per_t = round(P.trip_cost(km) / C.TRUCK_CAPACITY_T)
+            trips = math.ceil(qty_t / C.TRUCK_CAPACITY_T)
+            per_t = round(trips * P.trip_cost(km) / qty_t)
             lt["delivery_estimate"] = {
                 "to_region": b["region"],
+                "qty_t": qty_t,
                 "km": km,
                 "per_t_uzs": per_t,
                 "real_price_per_t": lt["price_per_t"] + per_t,
@@ -255,7 +258,11 @@ def fund():
         **ex,
         "expected_loss_pct": ex["default_rate_pct"] / 100 * ex["max_loss_pct"],
         "sustainable": dep.fund_is_sustainable(ex["default_rate_pct"], ex["max_loss_pct"], ex["fee_pct"]),
-        "fee_tiers": [{"min_rating": f, "pct": p} for f, p in C.INSURANCE_FEE_TIERS],
+        # Какую долю срывов выдерживает каждый тариф при убытке из примера: доля * убыток <= взнос.
+        "fee_tiers": [
+            {"min_rating": f, "pct": p, "max_default_rate_pct": round(p / ex["max_loss_pct"] * 100, 2)}
+            for f, p in C.INSURANCE_FEE_TIERS
+        ],
         "min_rating": C.INSURANCE_MIN_RATING,
         "max_amount_uzs": C.INSURANCE_MAX_AMOUNT_UZS,
     }
@@ -280,7 +287,7 @@ def evaluate(conn, body: RequestIn) -> dict:
             f"Страховка доступна при рейтинге от {C.INSURANCE_MIN_RATING} и сумме до {ai.money(C.INSURANCE_MAX_AMOUNT_UZS)}",
         )
     d = dep.compute(b["rating"], amount, g_rating, rule.get("min_prepay_pct") or 0, insurance)
-    nt = dep.next_tier(b["rating"])
+    nt = dep.next_tier(b["rating"], None if insurance else d["pct"])
     after = R.rating_after_next_success(_deals(conn, b["id"]), date.fromisoformat(b["created_at"]), b["components"]["start"])
     d_after = dep.compute(after, amount, g_rating, rule.get("min_prepay_pct") or 0)
     fee = dep.insurance_fee_pct(b["rating"])
@@ -356,9 +363,8 @@ def _log_request_decisions(conn, entity_type: str, entity_id: str, body: Request
 
 @app.post("/requests/preview")
 def preview(body: RequestIn, conn=Depends(get_conn)):
-    r = with_explanation(evaluate(conn, body))
-    _log_request_decisions(conn, "preview", f"{body.buyer_id}:{body.lot_id}:{body.qty_t}", body, r)
-    return r
+    # Preview — примерка, а не решение: в журнал не пишем. Решение пишется при подаче заявки.
+    return with_explanation(evaluate(conn, body))
 
 
 @app.post("/requests")
@@ -435,9 +441,9 @@ def pool_view(conn, pool_id: str, extra_excluded: list[dict] | None = None) -> d
     confirmed = {r["request_id"]: r["confirmed_at"] for r in rows}
     for m in view["members"]:
         m["confirmed"] = bool(confirmed[m["request_id"]])
-    in_pool = {m.id for m in members}
-    excluded = [e for e in P.propose_pools(pool_lot(lt), open_requests(conn, lt), dist)["excluded"] if e["request_id"] not in in_pool]
-    excluded = [e for e in excluded if e["code"] != "not_selected"] + (extra_excluded or [])
+    # Исключенные фиксируются в момент подбора: после блокировки залогов набор открытых заявок
+    # меняется, и пересчет дал бы другой якорь и другие причины.
+    excluded = [e for e in _proposal_excluded(conn, pool_id) if e["code"] != "not_selected"] + (extra_excluded or [])
     view.update(
         {
             "id": pool_id,
@@ -452,6 +458,28 @@ def pool_view(conn, pool_id: str, extra_excluded: list[dict] | None = None) -> d
     text, source = ai.explain("pool", _pool_payload(view))
     view["explanation"] = {"text": text, "source": source}
     return view
+
+
+def _proposal_excluded(conn, pool_id: str) -> list[dict]:
+    row = conn.execute(
+        "SELECT output_json FROM decisions_log WHERE entity_type='pool' AND entity_id=? AND kind='pool' "
+        "AND output_json LIKE '%\"excluded\"%' ORDER BY id LIMIT 1",
+        (pool_id,),
+    ).fetchone()
+    return json.loads(row["output_json"])["excluded"] if row else []
+
+
+def _log_proposal(conn, pool_id: str, lot_id: str, prop: dict, excluded: list[dict]) -> None:
+    db.log_decision(
+        conn,
+        "pool",
+        pool_id,
+        "pool",
+        {"lot_id": lot_id},
+        {"members": [m["request_id"] for m in prop["members"]], "total_t": prop["total_t"], "excluded": excluded},
+        None,
+        "formula",
+    )
 
 
 def _pool_payload(view: dict) -> dict:
@@ -498,7 +526,7 @@ def pool_proposals(lot_id: str, conn=Depends(get_conn)):
             return {"lot_id": lot_id, "pools": [], "reason": res["reason"], "excluded": res["excluded"], "details": res}
         ids = _create_pools(conn, lt, res["proposals"])
         for pid, prop in zip(ids, res["proposals"]):
-            db.log_decision(conn, "pool", pid, "pool", {"lot_id": lot_id}, {"members": [m["request_id"] for m in prop["members"]], "total_t": prop["total_t"], "excluded": res["excluded"]}, None, "formula")
+            _log_proposal(conn, pid, lot_id, prop, res["excluded"])
     else:
         ids = [r["id"] for r in active]
     pools = [pool_view(conn, pid) for pid in ids]
@@ -560,6 +588,7 @@ def pool_withdraw(pool_id: str, participant_id: str, conn=Depends(get_conn)):
     db.log_decision(conn, "pool", pool_id, "pool", {"withdraw": participant_id}, {"status": "failed", "replanned": bool(res["proposals"])}, None, "formula")
     if res["proposals"]:
         new_id = _create_pools(conn, lt, res["proposals"][:1], confirmed)[0]
+        _log_proposal(conn, new_id, lt["id"], res["proposals"][0], res["excluded"])
         view = pool_view(conn, new_id)
         view["replaced_pool_id"] = pool_id
         return view
@@ -625,6 +654,17 @@ def seller_requests(lot_id: str, conn=Depends(get_conn)):
         g_rating = participant(conn, q["guarantor_id"])["rating"] if q["guarantor_id"] else None
         amount = q["qty_t"] * lt["price_per_t"]
         adm = RU.admit(lt["rule"], b["rating"], b["completed_deals"], q["qty_t"], lt["volume_t"], lt["pool_allowed"], g_rating)
+        if q["status"] in LOCKED_STATUSES:
+            # Правило действует с момента подтверждения: на заявки с заблокированным залогом оно не влияет.
+            adm = {
+                **adm,
+                "admitted": True,
+                "status": "admitted",
+                "locked": True,
+                "new_rule_would_reject": not adm["admitted"],
+                "reasons": [],
+                "options": [],
+            }
         d = dep.compute(b["rating"], amount, g_rating, lt["rule"].get("min_prepay_pct") or 0)
         seller_volume, bought = _seller_window_amounts(conn, lt["seller"]["id"], b["id"])
         share = (bought + amount) / seller_volume * 100 if seller_volume else 0
@@ -677,10 +717,65 @@ def decisions(entity_type: str | None = None, entity_id: str | None = None, limi
         args.append(entity_id)
     q += " ORDER BY id DESC LIMIT ?"
     args.append(min(limit, 500))
-    return [
-        {**dict(r), "input": json.loads(r["input_json"]), "output": json.loads(r["output_json"])}
-        for r in conn.execute(q, args).fetchall()
-    ]
+    out = []
+    for r in conn.execute(q, args).fetchall():
+        inp, res = json.loads(r["input_json"]), json.loads(r["output_json"])
+        out.append(
+            {
+                **{k: r[k] for k in ("id", "entity_type", "entity_id", "kind", "explanation", "source", "created_at")},
+                "input": inp,
+                "output": res,
+                "title": _decision_title(conn, r["entity_type"], r["entity_id"]),
+                "summary": _decision_summary(r["kind"], inp, res),
+            }
+        )
+    return out
+
+
+def _decision_title(conn, entity_type: str, entity_id: str) -> str:
+    """Название объекта решения человеческими словами."""
+    if entity_type == "request":
+        q = conn.execute(
+            "SELECT p.name, q.qty_t, l.product FROM requests q JOIN participants p ON p.id=q.buyer_id "
+            "JOIN lots l ON l.id=q.lot_id WHERE q.id=?",
+            (entity_id,),
+        ).fetchone()
+        return f"Заявка {q['name']}: {q['product'].lower()}, {q['qty_t']} т" if q else "Заявка"
+    if entity_type == "pool":
+        p = conn.execute("SELECT l.product, l.grade FROM pools x JOIN lots l ON l.id=x.lot_id WHERE x.id=?", (entity_id,)).fetchone()
+        return f"Пул на {p['product'].lower()} {p['grade']}" if p else "Пул"
+    if entity_type == "lot":
+        lt = conn.execute("SELECT product, grade FROM lots WHERE id=?", (entity_id,)).fetchone()
+        return f"Лот {lt['product'].lower()} {lt['grade']}" if lt else "Лот"
+    return entity_type
+
+
+def _decision_summary(kind: str, inp: dict, res: dict) -> str:
+    """Короткий итог решения: что вошло и что вышло."""
+    if kind == "admission":
+        if res.get("locked"):
+            return "Допущен ранее, залог заблокирован: новое правило на заявку не влияет"
+        return "Допущен" if res.get("admitted") else "Отказ: " + "; ".join(x["message"] for x in res.get("reasons", []))
+    if kind == "deposit":
+        return f"Залог {res['pct']:g}% = {ai.money(res['deposit_uzs'])}" + (f", взнос {res['fee_pct']:g}%" if res.get("insurance") else "")
+    if kind == "risk":
+        level = {"low": "низкий", "medium": "средний", "high": "высокий"}[res["level"]]
+        return f"Риск {level}, {res['score']} баллов" + (": " + "; ".join(s["message"] for s in res["signals"]) if res["signals"] else "")
+    if kind == "pool":
+        if "members" in res:
+            return f"Подобран состав: {len(res['members'])} заявки, {res['total_t']} т; исключено {len(res.get('excluded', []))}"
+        if "confirm" in inp:
+            return f"Участник подтвердил, статус пула: {res['status']}" + (f", ждем еще {res['left']}" if res.get("left") else "")
+        if "withdraw" in inp:
+            return "Участник вышел, пул " + ("пересобран" if res.get("replanned") else "распался: замены нет")
+        if "status" in res:
+            return f"Показан пул, статус: {res['status']}"
+        return f"Пул не собран: {res.get('reason')}"
+    if kind == "rule_parse":
+        lines = RU.describe_rule(res.get("rule") or res) if (res.get("rule") or "min_rating" in res) else []
+        head = "Правило подтверждено продавцом" if inp.get("confirmed") else f"Разбор текста «{inp.get('text', '')}»"
+        return head + (": " + "; ".join(lines) if lines else ": поля для ручного ввода")
+    return ""
 
 
 @app.post("/demo/reset")

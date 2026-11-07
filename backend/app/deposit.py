@@ -12,9 +12,12 @@ def tier_pct(rating: int) -> float:
     return C.DEPOSIT_TIERS[-1][1]
 
 
-def next_tier(rating: int) -> tuple[int, float] | None:
-    """Ближайшая ступень выше текущей: (нужный рейтинг, процент) или None."""
-    current = tier_pct(rating)
+def next_tier(rating: int, current_pct: float | None = None) -> tuple[int, float] | None:
+    """Ближайшая ступень, где залог ниже текущего: (нужный рейтинг, процент) или None.
+
+    current_pct — фактический процент (например, уже сниженный поручителем); по умолчанию — по таблице.
+    """
+    current = tier_pct(rating) if current_pct is None else min(tier_pct(rating), current_pct)
     for floor, pct in sorted(C.DEPOSIT_TIERS):
         if floor > rating and pct < current:
             return floor, pct

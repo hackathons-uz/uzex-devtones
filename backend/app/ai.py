@@ -191,7 +191,7 @@ def _tier_range(rating: int) -> str:
     floors = sorted(f for f, _ in C.DEPOSIT_TIERS)
     lo = max(f for f in floors if f <= rating)
     higher = [f for f in floors if f > lo]
-    return f"{lo}-{higher[0] - 1}" if higher else f"{lo}+"
+    return f"{lo}–{higher[0] - 1}" if higher else f"{lo}+"
 
 
 def _t_deposit(p: dict) -> str:

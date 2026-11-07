@@ -201,3 +201,48 @@ def test_without_claude_key_answer_uses_template(client, monkeypatch):
     assert r["deposit"]["deposit_uzs"] == 1_800_000
     parsed = client.post("/lots/lot-cement/rules/parse", json={"text": "пускать от рейтинга 50"}).json()
     assert parsed["manual"] is True
+
+
+def test_excluded_list_is_stable_after_lock(client):
+    p = _pool(client)
+    before = [(e["buyer_name"], e["message"]) for e in p["excluded"]]
+    for m in p["members"]:
+        v = client.post(f"/pools/{p['id']}/confirm", params={"participant_id": m["buyer_id"]}).json()
+    assert v["status"] == "locked"
+    assert [(e["buyer_name"], e["message"]) for e in v["excluded"]] == before
+    assert any(name == "ХорезмСтрой" for name, _ in before)
+
+
+def test_new_rule_does_not_reject_locked_pool_members(client):
+    p = _pool(client)
+    for m in p["members"]:
+        client.post(f"/pools/{p['id']}/confirm", params={"participant_id": m["buyer_id"]})
+    client.post("/lots/lot-cement/rules", json={"rule": {"min_rating": 40, "newbie_max_volume_t": 5}, "source": "template"})
+    rows = {r["buyer"]["name"]: r for r in client.get("/lots/lot-cement/requests").json()["requests"]}
+    for name in ("СтройПлюс", "Бригада Алишера", "Магазин Дилноза"):
+        assert rows[name]["admission"]["admitted"] is True
+        assert rows[name]["admission"]["locked"] is True
+        assert rows[name]["admission"]["new_rule_would_reject"] is True
+    assert rows["СомнительТрейд"]["admission"]["admitted"] is False
+
+
+def test_next_tier_respects_guarantor(client):
+    r = preview(client, "stroyplus", qty=20, guarantor_id="nadezhny")
+    assert r["deposit"]["pct"] == 3
+    assert r["next_tier"] == {"rating": 90, "pct": 1.0, "points_left": 50}
+    assert "6%" not in r["explanation"]["text"]
+
+
+def test_preview_is_not_logged_and_journal_is_readable(client):
+    preview(client, "stroyplus", qty=20)
+    assert not [d for d in client.get("/decisions").json() if d["entity_type"] == "preview"]
+    client.get("/lots/lot-cement/pool-proposals")
+    rows = client.get("/decisions").json()
+    assert rows and all(d["title"] and d["summary"] for d in rows)
+
+
+def test_search_delivery_matches_pool_math(client):
+    lots = client.get("/lots", params={"buyer_id": "stroyplus", "qty_t": 20}).json()
+    cement = next(l for l in lots if l["id"] == "lot-cement")
+    # 1 рейс на 20 т, как в пуле «в одиночку»: 723 000 сум / 20 т.
+    assert cement["delivery_estimate"]["per_t_uzs"] == 36_150
