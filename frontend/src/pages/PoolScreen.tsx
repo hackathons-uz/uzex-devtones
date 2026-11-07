@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { api, type Pool } from '../api'
 import { AiCard, Button, ErrorBox, Icon, PoolBar, Reveal, SourceLabel, Trust, useLoad } from '../components/ui'
-import { mln, sum, t } from '../format'
+import { sum, t } from '../format'
 
 const LOT = 'lot-cement'
 const YOU = 'stroyplus'
@@ -33,7 +33,12 @@ export function PoolScreen() {
     return (
       <Narrow>
         <h1 className="h1">Пула пока нет</h1>
-        <p className="lead">Подходящих заявок не хватает, чтобы собрать лот. Причина: {q.data.reason}.</p>
+        <p className="lead">{emptyReason(q.data)}</p>
+        <div className="actions">
+          <a className="btn" href="#deposit">
+            <span className="btn__label">Вернуться к заявке</span>
+          </a>
+        </div>
       </Narrow>
     )
 
@@ -71,19 +76,23 @@ export function PoolScreen() {
             </span>
           </div>
 
-          <AiCard tag={locked ? 'ИИ собрал пул' : 'ИИ нашел пул'} className="block" title={`Еще ${others} покупателя рядом ищут тот же цемент`}>
+          <AiCard
+            tag={current.explanation.source === 'ai' ? 'ИИ объясняет пул' : 'Пул подобран по правилам'}
+            className="block"
+            title={locked ? `Вы и еще ${others} покупателя купили цемент вместе` : `Еще ${others} покупателя рядом ищут тот же цемент`}
+          >
             <p className="ai-text" key={current.explanation.text}>
               <Reveal text={current.explanation.text} />
             </p>
             <div className="compare">
               <div className="compare__cell">
                 <div className="compare__k">Доставка по отдельности</div>
-                <div className="compare__v">{mln(current.alone_cost_uzs)}</div>
+                <div className="compare__v">{sum(current.alone_cost_uzs)}</div>
                 <div className="compare__s">каждый своей машиной</div>
               </div>
               <div className={`compare__cell ${current.saving_uzs > 0 ? 'compare__cell--win' : ''}`}>
                 <div className="compare__k">Доставка в пуле</div>
-                <div className="compare__v">{mln(current.pool_cost_uzs)}</div>
+                <div className="compare__v">{sum(current.pool_cost_uzs)}</div>
                 <div className="compare__s">
                   {current.trips} рейса по маршруту {current.route_km} км ·{' '}
                   {current.saving_uzs >= 0 ? `дешевле на ${sum(current.saving_uzs)}` : `дороже на ${sum(-current.saving_uzs)}`}
@@ -186,6 +195,17 @@ export function PoolScreen() {
       </section>
     </>
   )
+}
+
+type Proposals = Awaited<ReturnType<typeof api.poolProposals>>
+
+function emptyReason(d: Proposals): string {
+  const det = d.details
+  if (d.reason === 'not_enough_volume' && det)
+    return `Подходящих заявок хватает только на ${t(det.max_collected_t ?? 0)}, а для пула нужно от ${t(det.min_fill_t ?? 0)}. Возможно, продавец ужесточил правила. Чтобы начать заново, выберите «Еще» → «Сбросить демо».`
+  if (d.reason === 'pool_not_allowed') return 'Продавец не разрешает покупать этот лот пулом.'
+  if (d.reason === 'no_candidates') return 'Пока нет открытых заявок, которые проходят правила продавца.'
+  return 'Подходящих заявок не хватает, чтобы собрать лот.'
 }
 
 function Narrow({ children }: { children: React.ReactNode }) {

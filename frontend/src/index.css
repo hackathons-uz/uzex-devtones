@@ -346,3 +346,11 @@ main { flex:1; }
 .note { margin-top: 16px; font-size: 14px; color: var(--graphite); }
 .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
 @media (max-width: 900px) { .grid2 { grid-template-columns: 1fr; } .req__head { grid-template-columns: minmax(0,1fr) auto; } }
+
+/* Узкий экран: сегменты переносятся на новую строку, а не вылезают за край. */
+@media (max-width: 560px) {
+  .seg-c { flex-wrap: wrap; border-radius: var(--radius-inner); }
+  .seg-c__item { white-space: normal; text-align: left; min-height: 44px; height: auto; padding-top: 8px; padding-bottom: 8px; }
+  .member__act { min-width: 0; }
+  .chip { height: auto; min-height: 40px; padding-top: 8px; padding-bottom: 8px; text-align: left; }
+}

@@ -16,18 +16,20 @@ function Shell({ title, lead, children }: { title: React.ReactNode; lead: string
 }
 
 export function SearchScreen() {
-  const q = useLoad(() => api.lots('stroyplus'), [])
+  // Запрос в поле — пример «цемент М400 в Фергану, 20 т»: показываем только подходящие лоты.
+  const q = useLoad(() => api.lots('stroyplus', 20), [])
+  const found = q.data?.filter((l) => l.product.toLowerCase().includes('цемент'))
   return (
     <Shell title="Поиск с ценой до двери" lead="Цена за тонну на складе в другом городе ничего не говорит. Показываем реальную цену с доставкой до Ферганы.">
       <div className="ask" aria-hidden="true">
         <span className="ask__input" style={{ color: 'var(--graphite)' }}>
-          цемент М400 в Фергану
+          цемент М400 в Фергану, 20 т
         </span>
         <span className="ask__send">{Icon.arrow}</span>
       </div>
       <ErrorBox error={q.error} />
       <div className="block">
-        {q.data?.map((l) => (
+        {found?.map((l) => (
           <div key={l.id} className="card">
             <div className="row" style={{ borderTop: 0, padding: 0 }}>
               <span className="row__name">
@@ -50,7 +52,7 @@ export function SearchScreen() {
                   <div className="compare__k">Реальная цена</div>
                   <div className="compare__v">{sum(l.delivery_estimate.real_price_per_t)}</div>
                   <div className="compare__s">
-                    с доставкой {l.delivery_estimate.km} км, {sum(l.delivery_estimate.per_t_uzs)} за тонну — оценка
+                    доставка {t(l.delivery_estimate.qty_t)} на {l.delivery_estimate.km} км: {sum(l.delivery_estimate.per_t_uzs)} за тонну — оценка
                   </div>
                 </div>
               </div>
@@ -133,14 +135,19 @@ export function InsuranceScreen() {
         <div className="card">
           <h2 className="h2">Фонд {f.data.sustainable ? 'устойчив' : 'не устойчив'}</h2>
           <p className="ai-text">
-            Доля срывов {pct(f.data.default_rate_pct)} × убыток на срыв {pct(f.data.max_loss_pct)} = {pct(f.data.expected_loss_pct)} от суммы сделки. Это{' '}
-            {f.data.sustainable ? 'не больше' : 'больше'} взноса {pct(f.data.fee_pct)}. Все цифры условные.
+            Пример: доля срывов {pct(f.data.default_rate_pct)} × убыток на срыв {pct(f.data.max_loss_pct)} = {pct(f.data.expected_loss_pct)} от суммы
+            сделки. Это {f.data.sustainable ? 'не больше' : 'больше'} среднего взноса {pct(f.data.fee_pct)}. Все цифры условные.
+          </p>
+          <p className="ai-text">
+            У надежных участников срывов меньше, поэтому взнос ниже. Каждый тариф выдерживает свою долю срывов при том же убытке:
           </p>
           <div className="fields">
             {f.data.fee_tiers.map((x) => (
               <div key={x.min_rating} className="field">
-                <span>Рейтинг от {x.min_rating}</span>
-                <span>{pct(x.pct)}</span>
+                <span>
+                  Рейтинг от {x.min_rating}: взнос {pct(x.pct)}
+                </span>
+                <span>срывов до {pct(x.max_default_rate_pct)}</span>
               </div>
             ))}
           </div>
@@ -199,15 +206,19 @@ const SRC = { ai: 'ИИ', template: 'шаблон', formula: 'формула' } 
 export function JournalScreen() {
   const q = useLoad(() => api.decisions(), [])
   return (
-    <Shell title="Журнал решений" lead="Каждое решение системы записано со входом, выходом и объяснением. По нему биржа разбирает споры и доказывает честность торгов.">
+    <Shell
+      title="Журнал решений"
+      lead="Каждое решение системы записано: что решено и почему. По журналу биржа разбирает споры и доказывает честность торгов. Одинаковое решение подряд не дублируется, а примерка залога до подачи заявки — не решение."
+    >
       <ErrorBox error={q.error} />
       <div className="rows block">
         {q.data?.length === 0 && <p className="hint">Пока пусто. Пройдите шаги демо.</p>}
         {q.data?.map((d) => (
           <div key={d.id} className="row">
             <span className="row__name">
-              {KIND[d.kind] ?? d.kind} · {d.entity_type} {d.entity_id}
-              <span className="row__meta">{d.explanation ?? 'Решение по формуле, без текста'}</span>
+              {KIND[d.kind] ?? d.kind} · {d.title}
+              <span className="row__meta">{d.summary}</span>
+              {d.explanation && <span className="row__meta">Объяснение: {d.explanation}</span>}
             </span>
             <span className="state">{SRC[d.source]}</span>
             <span className="row__meta">{d.created_at.slice(11, 16)}</span>

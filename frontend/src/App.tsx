@@ -44,7 +44,21 @@ export function App() {
     setMenu(false)
   }, [screen])
 
+  // Меню закрывается по Escape и по клику снаружи.
+  useEffect(() => {
+    if (!menu) return
+    const onKey = (e: KeyboardEvent) => e.key === 'Escape' && setMenu(false)
+    const onClick = (e: MouseEvent) => !(e.target as HTMLElement).closest('.more') && setMenu(false)
+    addEventListener('keydown', onKey)
+    addEventListener('mousedown', onClick)
+    return () => {
+      removeEventListener('keydown', onKey)
+      removeEventListener('mousedown', onClick)
+    }
+  }, [menu])
+
   const reset = async () => {
+    setMenu(false)
     await api.reset()
     setEpoch((e) => e + 1)
     go('deposit')

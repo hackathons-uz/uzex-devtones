@@ -76,7 +76,14 @@ export type Lot = {
   rule_lines: string[]
   rules_text: string | null
   seller: { id: string; name: string; region: string; rating: number; completed_deals: number; defaults_12m: number }
-  delivery_estimate?: { to_region: string; km: number; per_t_uzs: number; real_price_per_t: number; is_estimate: boolean }
+  delivery_estimate?: {
+    to_region: string
+    qty_t: number
+    km: number
+    per_t_uzs: number
+    real_price_per_t: number
+    is_estimate: boolean
+  }
 }
 
 export type Reason = { code: string; message: string }
@@ -88,6 +95,8 @@ export type Admission = {
   is_newbie: boolean
   reasons: Reason[]
   options: Option[]
+  locked?: boolean
+  new_rule_would_reject?: boolean
 }
 export type NextTier = { rating: number; pct: number; points_left: number }
 export type Deposit = { pct: number; deposit_uzs: number; insurance: boolean; fee_pct: number | null; fee_uzs: number }
@@ -196,6 +205,8 @@ export type Decision = {
   source: Source
   created_at: string
   output: unknown
+  title: string
+  summary: string
 }
 export type Fund = {
   fee_pct: number
@@ -203,20 +214,26 @@ export type Fund = {
   max_loss_pct: number
   expected_loss_pct: number
   sustainable: boolean
-  fee_tiers: { min_rating: number; pct: number }[]
+  fee_tiers: { min_rating: number; pct: number; max_default_rate_pct: number }[]
   min_rating: number
   max_amount_uzs: number
 }
 
 export const api = {
   participant: (id: string) => call<Participant>('GET', `/participants/${id}`),
-  lots: (buyerId?: string) => call<Lot[]>('GET', `/lots${buyerId ? `?buyer_id=${buyerId}` : ''}`),
+  lots: (buyerId?: string, qtyT?: number) =>
+    call<Lot[]>('GET', `/lots${buyerId ? `?buyer_id=${buyerId}${qtyT ? `&qty_t=${qtyT}` : ''}` : ''}`),
   lot: (id: string) => call<Lot>('GET', `/lots/${id}`),
   preview: (b: RequestBody) => call<Preview>('POST', '/requests/preview', b),
   submit: (b: RequestBody) => call<Preview & { id: string; status: string }>('POST', '/requests', b),
   confirmRequest: (id: string) => call<{ id: string; status: string }>('POST', `/requests/${id}/confirm`),
   poolProposals: (lotId: string) =>
-    call<{ pools: Pool[]; reason: string | null; excluded?: Excluded[] }>('GET', `/lots/${lotId}/pool-proposals`),
+    call<{
+      pools: Pool[]
+      reason: string | null
+      excluded?: Excluded[]
+      details?: { max_collected_t?: number; min_fill_t?: number }
+    }>('GET', `/lots/${lotId}/pool-proposals`),
   poolConfirm: (poolId: string, pid: string) => call<Pool>('POST', `/pools/${poolId}/confirm?participant_id=${pid}`),
   poolWithdraw: (poolId: string, pid: string) => call<Pool>('POST', `/pools/${poolId}/withdraw?participant_id=${pid}`),
   parseRule: (lotId: string, text: string) => call<ParsedRule>('POST', `/lots/${lotId}/rules/parse`, { text }),

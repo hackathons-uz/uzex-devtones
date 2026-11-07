@@ -170,7 +170,7 @@ export function DepositScreen({ go }: { go: (s: string) => void }) {
 function Verdict({ p, onOption }: { p: Preview; onOption: (code: string, maxT?: number) => void }) {
   const ok = p.admission.admitted
   return (
-    <AiCard tag="ИИ объясняет" className="block">
+    <AiCard tag={p.explanation.source === 'ai' ? 'ИИ объясняет' : 'Объяснение'} className="block">
       <div className={`verdict ${ok ? '' : 'verdict--no'}`}>
         <span className="verdict__icon">{ok ? Icon.check : Icon.cross}</span>
         <p className="verdict__title">{ok ? 'Вы подходите под правила продавца' : 'Вы не подходите, потому что…'}</p>

@@ -178,6 +178,11 @@ function RequestRow({ r, changed }: { r: SellerRequest; changed: boolean }) {
           {r.risk.score > 0 ? ` · ${r.risk.score}` : ''}
         </button>
         {!ok && <span className="note" style={{ marginTop: 0 }}>{r.admission.reasons.map((x) => x.message).join('; ')}</span>}
+        {r.admission.locked && (
+          <span className="note" style={{ marginTop: 0 }}>
+            Залог заблокирован в пуле.{r.admission.new_rule_would_reject ? ' Новое правило действует только для новых заявок.' : ''}
+          </span>
+        )}
       </div>
       {open && (
         <div className="req__why">
