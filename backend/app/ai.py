@@ -8,6 +8,7 @@ import hashlib
 import json
 import logging
 import os
+import re
 
 from . import config as C
 from . import db
@@ -161,10 +162,78 @@ def explain(kind: str, payload: dict) -> tuple[str, str]:
         f"Тип решения: {kind}.\nРезультат расчета в JSON (числа уже посчитаны, их не меняй):\n"
         + json.dumps(payload, ensure_ascii=False, indent=1)
     )
-    text, _ = _cached({"explain": kind, "payload": payload}, lambda: _call(SYSTEM_EXPLAIN, user))
-    if text:
-        return text.replace("ё", "е").replace("Ё", "Е"), "ai"
+    def produce() -> str | None:
+        raw = _call(SYSTEM_EXPLAIN, user)
+        if raw is None:
+            return None
+        raw = raw.replace("ё", "е").replace("Ё", "Е")
+        problem = check_text(raw, payload)
+        if problem:
+            # Плохой текст не показываем и не кладем в кэш: вместо него шаблон.
+            global last_error
+            last_error = f"rejected_text: {problem}"
+            log.warning("Claude: текст отклонен (%s): %r", problem, raw[:200])
+            return None
+        return raw
+
+    text, _ = _cached({"explain": kind, "payload": payload}, produce)
+    # Проверяем и текст из кэша: там мог остаться текст, сохраненный до появления проверки.
+    if text and check_text(text, payload) is None:
+        return text, "ai"
     return TEMPLATES[kind](payload), "template"
+
+
+# ---------- Проверка текста Claude кодом до показа ----------
+
+_SELF_FIX = re.compile(r"\b(точнее|вернее|то есть нет|извините|ой)\b", re.IGNORECASE)
+_NUM = re.compile(r"\d{1,3}(?:[  ]\d{3})+(?:,\d+)?|\d+(?:[.,]\d+)?")
+
+
+def _payload_numbers(obj) -> set[float]:
+    """Все числа из входа и их записи в тысячах и миллионах (1 800 000 -> 1,8 млн)."""
+    out: set[float] = set()
+
+    def walk(v):
+        if isinstance(v, bool):
+            return
+        if isinstance(v, (int, float)):
+            # Без знака: экономия -85000 в тексте звучит как «переплатят 85 000 сум».
+            n = abs(float(v))
+            out.update({n, round(n / 1000, 3), round(n / 1_000_000, 3), round(n * 100, 3)})
+        elif isinstance(v, str):
+            for m in _NUM.findall(v):
+                out.add(_to_float(m))
+        elif isinstance(v, dict):
+            for x in v.values():
+                walk(x)
+        elif isinstance(v, (list, tuple)):
+            for x in v:
+                walk(x)
+
+    walk(obj)
+    return out
+
+
+def _to_float(s: str) -> float:
+    return float(re.sub(r"[  ]", "", s).replace(",", "."))
+
+
+def check_text(text: str, payload: dict) -> str | None:
+    """None — текст можно показывать. Иначе — причина отказа."""
+    if re.search(r"[A-Za-z]", text):
+        return "latin"
+    if _SELF_FIX.search(text):
+        return "self_correction"
+    # Длину текста не проверяем: лишнее предложение — не повод заменять живой текст шаблоном.
+    known = _payload_numbers(payload)
+    for m in _NUM.findall(text):
+        n = _to_float(m)
+        # Небольшие счетные числа (2-3 предложения, 1 рейс) допустимы; суммы и проценты — только из входа.
+        if n <= 10 and float(n).is_integer():
+            continue
+        if not any(abs(n - k) <= max(0.051, abs(k) * 0.001) for k in known):
+            return f"unknown_number:{m}"
+    return None
 
 
 def parse_rule(text: str) -> tuple[dict | None, list[str], str]:
