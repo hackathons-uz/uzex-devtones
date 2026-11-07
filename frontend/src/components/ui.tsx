@@ -123,12 +123,17 @@ export function Reveal({ text }: { text: string }) {
   )
 }
 
-export function SourceLabel({ e }: { e: Explanation | { source: string } }) {
+const SOURCE_TEXT = {
+  explain: { ai: 'Текст написал ИИ по цифрам из формул', other: 'Текст собран по шаблону: ИИ недоступен, цифры те же' },
+  rule: { ai: 'ИИ разобрал текст. Правило начнет действовать после вашего подтверждения', other: 'ИИ недоступен: условия заполняются вручную' },
+}
+
+export function SourceLabel({ e, kind = 'explain' }: { e: Explanation | { source: string }; kind?: keyof typeof SOURCE_TEXT }) {
   const ai = e.source === 'ai'
   return (
     <span className={`src ${ai ? 'src--ai' : ''}`}>
       <span className="src__dot" aria-hidden="true" />
-      {ai ? 'Текст написал ИИ по цифрам из формул' : 'Текст собран по шаблону: ИИ недоступен, цифры те же'}
+      {ai ? SOURCE_TEXT[kind].ai : SOURCE_TEXT[kind].other}
     </span>
   )
 }

@@ -116,7 +116,7 @@ export function SellerScreen() {
               )}
             </div>
             {parsed.unparsed.length > 0 && <p className="note">Не понял и не применяю: «{parsed.unparsed.join('», «')}»</p>}
-            <SourceLabel e={parsed} />
+            <SourceLabel e={parsed} kind="rule" />
             <div className="actions" style={{ marginTop: 24 }}>
               <Button icon busy={busy === 'save'} onClick={save}>
                 Подтвердить правило

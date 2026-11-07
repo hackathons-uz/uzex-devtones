@@ -382,6 +382,8 @@ main { flex:1; }
   .shell { grid-template-columns: minmax(0, 1fr); }
   .side { position: sticky; z-index: 11; height: auto; flex-direction: row; align-items: center; gap: 4px; padding: 8px 12px; overflow-x: auto; overflow-y: hidden; border-right: 0; border-bottom: 1px solid var(--line); scrollbar-width: none; }
   .side::-webkit-scrollbar { display: none; }
+  /* Затухание у правого края подсказывает, что ленту можно прокрутить. */
+  .side { -webkit-mask-image: linear-gradient(90deg, #000 calc(100% - 56px), transparent); mask-image: linear-gradient(90deg, #000 calc(100% - 56px), transparent); padding-right: 48px; }
   .side__logo, .side__title { display: none; }
   .side__group { display: flex; gap: 4px; margin: 0; }
   .nav { width: auto; height: 40px; flex: none; }
