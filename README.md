@@ -62,4 +62,4 @@ Claude необязателен. Без ключа заявка разбирае
 
 ## Шрифты
 
-В макете стоят Versus Ultra и Medeo Sans. Файл Versus Ultra помечен «Copyright 2019 Marcelo Moya Ochoa. All rights reserved», и это неофициальная кириллическая версия. Без лицензии на веб его нельзя выкладывать в публичный деплой. Поэтому вместо них подключены бесплатные Unbounded (цифры) и Onest (текст) из Google Fonts. Если у команды есть лицензия, положите файлы в `frontend/public/fonts/` и добавьте `@font-face` в начало `frontend/src/index.css`: имена шрифтов уже стоят первыми в `--font-display` и `--font-sans`.
+Versus Ultra (цифры) и Medeo Sans (текст) из макета лежат в `frontend/public/fonts/`. Лицензию на них команде выдали организаторы хакатона.

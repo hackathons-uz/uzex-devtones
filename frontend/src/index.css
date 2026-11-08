@@ -1,14 +1,16 @@
 
-/* Стили из макета Davra без изменений, кроме шрифтов (см. README) и блока «добавлено» в конце.
+/* Стили из макета Davra без изменений, кроме запасных шрифтов и блока «добавлено» в конце.
    Layout: app shell. Sidebar (logo, new request, drafts, business) on the left, the working screen on the right with a compact step bar on top. Davra design system: beige ground, orange for actions, burgundy for fields, Versus Ultra for figures, Medeo Sans for everything else. */
+@font-face { font-family: "Versus Ultra"; src: url("/fonts/versus-ultra.otf") format("opentype"); font-weight: 900; font-display: swap; }
+@font-face { font-family: "Medeo Sans"; src: url("/fonts/medeo-sans.woff2") format("woff2"); font-weight: 100 900; font-display: swap; }
 :root {
   --surface:#F2E8D7; --surface-raised:#E9DAC4; --surface-inverse:#1E1213; --on-inverse:#F2E8D7;
   --ink:#1E1213; --ink-muted:#6B5148; --line:rgba(30,18,19,.14); --line-strong:#1E1213;
   --orange:#FF650C; --orange-hover:#FF8540; --on-orange:#1E1213;
   --burgundy:#7A1F2B; --on-burgundy:#F2E8D7; --link:#7A1F2B;
   --success:#2F6B3A; --success-soft:#D7E8D3; --warning:#8A3500; --warning-soft:#FFDCC6; --danger:#A61E15; --danger-soft:#F9D3CC;
-  --font-display:"Versus Ultra","Unbounded","Arial Black",system-ui,sans-serif;
-  --font-sans:"Medeo Sans","Onest",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --font-display:"Versus Ultra","Arial Black",system-ui,sans-serif;
+  --font-sans:"Medeo Sans",system-ui,-apple-system,"Segoe UI",sans-serif;
   --r-sm:9px; --r-md:16px; --r-card:25px; --r-pill:1000px;
   --space-3:14px; --space-4:18px; --space-6:28px;
   --ease-out:cubic-bezier(.23,1,.32,1);
