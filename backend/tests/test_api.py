@@ -134,3 +134,10 @@ def test_stt_passes_text(client, monkeypatch):
     assert r.json() == {"text": "2 тонны муки"}
     assert sent["auth"] == "test-key" and sent["file"] == ("voice.webm", b"abc", "audio/webm")
     assert sent["data"]["language"] == "uz-ru" and sent["data"]["blocking"] == "true"
+
+
+def test_need_correction_after_complete(client):
+    r = _need(client, "2 т муки в/с в Самарканд до 25 ноября", "нет, давай 3 т", asked=[None])
+    assert r["missing"] == [] and r["spec"]["qty_t"] == 3 and r["spec"]["due_text"] == "25 ноября"
+    r = _need(client, "2 т муки в/с в Самарканд до 25 ноября", "нет, давай 3 т", "срок до 30 ноября", asked=[None, None])
+    assert (r["spec"]["qty_t"], r["spec"]["due_text"]) == (3, "30 ноября")

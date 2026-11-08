@@ -162,16 +162,11 @@ export function App() {
         rounds={rounds}
         onRounds={setRounds}
         onComplete={(r) => {
-          if (r.pool?.id !== poolId) {
-            setPool(null)
-            setAuction(null)
-          }
+          if (r.pool?.id !== poolId) setAuction(null)
+          // Объем мог поменяться: пул перезагрузится с новой долей. Если вы уже в пуле, доля остается прежней.
+          if (r.pool?.id !== poolId || !pool?.you.joined) setPool(null)
           setPoolId(r.pool?.id ?? null)
           if (r.spec.qty_t) setQty(r.spec.qty_t)
-        }}
-        onEdit={() => {
-          clearFlow()
-          setComposerText(text)
         }}
         onShowPool={() => advance('pool')}
       />
