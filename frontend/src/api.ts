@@ -35,6 +35,8 @@ export type Source = 'ai' | 'template'
 
 export type Me = { id: string; name: string; initials: string; city: string; rating: number; deposit_pct: number }
 
+export type NeedField = 'product' | 'qty_t' | 'due'
+
 export type NeedResult = {
   spec: {
     product: string | null
@@ -42,15 +44,20 @@ export type NeedResult = {
     city: string
     city_from_profile: boolean
     hub: string
-    due: string
-    due_text: string
-    due_given: boolean
+    due: string | null
+    due_text: string | null
+    due_source: 'given' | 'flexible' | 'missing' | 'past'
     budget_uzs: number
   }
-  missing: ('product' | 'qty_t')[]
+  missing: NeedField[]
+  question: string | null
   pool: { id: string; members: number; lot_t: number; lot_unit: string; joined: boolean } | null
+  pool_late: { delivery_text: string } | null
   source: Source
 }
+
+/** Одно сообщение покупателя и вопрос, на который оно отвечает. */
+export type NeedTurn = { text: string; asked: NeedField | null }
 
 export type Factor = { key: string; label: string; points: number; deposit_pp: number }
 
@@ -153,7 +160,8 @@ export type Dispute = {
 export const api = {
   me: () => call<Me>('GET', '/me'),
   reset: () => call<{ ok: true }>('POST', '/demo/reset'),
-  need: (text: string) => call<NeedResult>('POST', '/need', { text }),
+  need: (turns: NeedTurn[]) =>
+    call<NeedResult>('POST', '/need', { messages: turns.map((t) => t.text), asked: turns.map((t) => t.asked) }),
   pool: (id: string, qty_t: number) => call<Pool>('GET', `/pools/${id}?qty_t=${qty_t}`),
   join: (id: string, qty_t: number) => call<JoinResult>('POST', `/pools/${id}/join`, { qty_t }),
   auction: (id: string) => call<Auction>('GET', `/pools/${id}/auction`),

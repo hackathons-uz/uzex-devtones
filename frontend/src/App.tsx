@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { api, type Auction as AuctionT, type Deal as DealT, type Me, type NeedResult, type Pool as PoolT } from './api'
+import { api, type Auction as AuctionT, type Deal as DealT, type Me, type Pool as PoolT } from './api'
 import { Logo, LogoSymbols } from './components/Logo'
 import { Check, Cross } from './components/ui'
 import { readDrafts, readSession, saveDraft, writeDrafts, writeSession, type Draft } from './drafts'
@@ -8,7 +8,7 @@ import { Auction } from './screens/Auction'
 import { Deal } from './screens/Deal'
 import { Dispute } from './screens/Dispute'
 import { Intro } from './screens/Intro'
-import { Need } from './screens/Need'
+import { Need, type NeedRound } from './screens/Need'
 import { Pool } from './screens/Pool'
 
 type Step = 'need' | 'pool' | 'auction' | 'deal' | 'reg'
@@ -34,7 +34,7 @@ export function App() {
   const [done, setDone] = useState<Partial<Record<Step, boolean>>>({})
   const [text, setText] = useState(session.current?.text ?? '')
   const [composerText, setComposerText] = useState('')
-  const [need, setNeed] = useState<NeedResult | null>(null)
+  const [rounds, setRounds] = useState<NeedRound[]>(() => (session.current?.text ? [{ turn: { text: session.current.text, asked: null }, reply: null }] : []))
   const [poolId, setPoolId] = useState<string | null>(session.current?.poolId ?? null)
   const [qty, setQty] = useState(session.current?.qty ?? 2)
   const [pool, setPool] = useState<PoolT | null>(null)
@@ -103,7 +103,7 @@ export function App() {
     setStep(null)
     setDone({})
     setText('')
-    setNeed(null)
+    setRounds([])
     setPoolId(null)
     setPool(null)
     setAuction(null)
@@ -147,7 +147,7 @@ export function App() {
 
   function send(t: string) {
     setText(t)
-    setNeed(null)
+    setRounds([{ turn: { text: t, asked: null }, reply: null }])
     go('need')
   }
 
@@ -155,21 +155,19 @@ export function App() {
   const bizName = me?.name ?? 'Вы'
 
   let screen = null
-  if (step === 'need' && text)
+  if (step === 'need' && rounds.length)
     screen = (
       <Need
-        key={text}
-        text={text}
         bizName={bizName}
-        result={need}
-        onResult={(r) => {
-          setNeed(r)
-          if (r.pool) setPoolId(r.pool.id)
-          if (r.spec.qty_t) setQty(r.spec.qty_t)
+        rounds={rounds}
+        onRounds={setRounds}
+        onComplete={(r) => {
           if (r.pool?.id !== poolId) {
             setPool(null)
             setAuction(null)
           }
+          setPoolId(r.pool?.id ?? null)
+          if (r.spec.qty_t) setQty(r.spec.qty_t)
         }}
         onEdit={() => {
           clearFlow()
