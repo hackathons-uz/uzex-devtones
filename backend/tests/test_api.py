@@ -12,7 +12,7 @@ def test_need_ru_and_uz(client):
     assert r["spec"]["hub"] == "Самарканд, хаб «Север»"
     assert r["spec"]["due_text"] == "25 ноября"
     assert r["spec"]["budget_uzs"] == 4600
-    assert r["pool"] == {"id": POOL, "members": 36, "lot_t": 60, "lot_unit": "вагон"}
+    assert r["pool"] == {"id": POOL, "members": 36, "lot_t": 60, "lot_unit": "вагон", "joined": False}
     uz = client.post("/need", json={"text": "25-noyabrgacha Samarqandga 2 tonna un"}).json()
     assert uz["spec"]["qty_t"] == 2 and uz["spec"]["due_given"] and uz["pool"]["id"] == POOL
 
@@ -53,6 +53,8 @@ def test_join_twice_or_too_much(client):
     assert client.post(f"/pools/{POOL}/join", json={"qty_t": 11}).status_code == 409
     _to_deal(client)
     assert client.post(f"/pools/{POOL}/join", json={"qty_t": 2}).json()["error"] == "pool_closed"
+    again = client.post("/need", json={"text": "2 т муки в Самарканд"}).json()
+    assert again["pool"]["joined"] is True
 
 
 def test_deal_happy_path(client):

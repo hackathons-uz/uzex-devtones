@@ -201,11 +201,20 @@ def parse_need(body: NeedIn, conn=Depends(get_conn)):
     pool = None
     if parsed["product"] and parsed["qty_t"] and parsed["qty_t"] > 0:
         row = conn.execute(
-            "SELECT * FROM pool WHERE product=? AND city=? AND status='collecting'", (parsed["product"], city_key)
+            # Собранный пул тоже подходит, если вы уже в нем: заявку можно открыть заново.
+            "SELECT * FROM pool WHERE product=? AND city=? AND (status='collecting' OR id IN "
+            "(SELECT pool_id FROM pool_member WHERE business_id=?))",
+            (parsed["product"], city_key, seed.BUSINESS_ID),
         ).fetchone()
         if row:
             members = sum(m["members"] for m in _members(conn, row["id"]))
-            pool = {"id": row["id"], "members": members, "lot_t": row["lot_t"], "lot_unit": row["lot_unit"]}
+            pool = {
+                "id": row["id"],
+                "members": members,
+                "lot_t": row["lot_t"],
+                "lot_unit": row["lot_unit"],
+                "joined": _you(conn, row["id"]) is not None,
+            }
     db.log(conn, "need", {"text": body.text, "source": source, "spec": spec, "pool": pool and pool["id"]})
     return {"spec": spec, "missing": missing, "pool": pool, "source": source}
 
