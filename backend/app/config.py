@@ -1,61 +1,48 @@
-"""Все условные числа демо. Нигде больше не дублируются (PRD v3, «Стек и структура»)."""
+"""Все условные числа демо. Нигде больше не дублируются."""
 
 from datetime import date
 
-# Фиксированная дата демо: стаж, «последние 12 месяцев» и «30 дней» считаются от нее,
+# Фиксированная дата демо: «до закрытия сбора», «за 12 месяцев» считаются от нее,
 # поэтому результат одинаковый при каждом запуске.
-DEMO_TODAY = date(2026, 11, 7)
+DEMO_TODAY = date(2026, 11, 17)
 
-# --- Рейтинг ---
-RATING_WEIGHTS = {"S": 0.30, "P": 0.25, "D": 0.20, "T": 0.10, "V": 0.15}
-RATING_START = 40
-HISTORY_SMOOTHING = 5  # w = n / (n + 5)
-TENURE_FULL_MONTHS = 36
-PARTNERS_FULL = 10
-PENALTY_DEFAULT = 15  # за каждый срыв за последние 12 месяцев
-PENALTY_DISPUTE_LOST = 5  # за каждый проигранный спор
-PENALTY_WINDOW_DAYS = 365
-NEWBIE_MAX_DEALS = 3  # новичок: меньше 3 завершенных сделок
+# --- Рейтинг надежности и задаток ---
+# Рейтинг = RATING_BASE + сумма баллов факторов (0..100).
+# Задаток = DEPOSIT_MAX_PCT - сумма баллов / 10 (1..10%): 10 баллов рейтинга = 1 п.п. задатка.
+RATING_BASE = 7  # бизнес прошел проверку ИНН в ГНК
+DEPOSIT_MAX_PCT = 10.0
+DEPOSIT_MIN_PCT = 1.0
+POINTS_PER_PCT = 10
 
-# --- Залог: (нижняя граница рейтинга, процент), по убыванию ---
-DEPOSIT_TIERS = [(90, 1.0), (80, 3.0), (60, 6.0), (40, 10.0), (0, 15.0)]
-GUARANTOR_MIN_RATING = 80
-GUARANTOR_FLOOR_PCT = 3.0
-GUARANTOR_MAX_ACTIVE = 3
-ZERO_DEPOSIT_LIMIT_UZS = 100_000_000
-ZERO_DEPOSIT_LIMIT_FLOOR_PCT = 3.0
-LARGE_DEAL_LIMIT_UZS = 500_000_000
-LARGE_DEAL_FLOOR_PCT = 6.0
+# Сделки без срывов: 2 балла за каждую и 2 за первую, не больше 40.
+DEAL_POINTS_PER = 2
+DEAL_POINTS_FIRST = 2
+DEAL_POINTS_MAX = 40
+# Налоги без долгов: (лет не меньше, баллы), по убыванию.
+TAX_TIERS = [(3, 25), (1, 10)]
+# Возраст бизнеса со стабильными оборотами: (лет не меньше, баллы).
+AGE_TIERS = [(3, 25), (1, 10)]
+# Задержка оплаты за последние 12 месяцев: минус баллы за каждую.
+LATE_PAYMENT_POINTS = -5
+LATE_WINDOW_DAYS = 365
+# Подсказка «еще N сделок, и задаток станет не больше X%».
+DEPOSIT_HINT_TARGET_PCT = 2.0
 
-# --- Страховка вместо залога ---
-INSURANCE_MIN_RATING = 60
-INSURANCE_MAX_AMOUNT_UZS = 300_000_000
-INSURANCE_FEE_TIERS = [(90, 0.7), (80, 1.0), (60, 1.5)]
-FUND_EXAMPLE = {"fee_pct": 1.0, "default_rate_pct": 5.0, "max_loss_pct": 20.0}
+# --- Цена ---
+# Ожидаемая цена = средняя биржевая цена за прошлый месяц минус середина скидки за полный вагон.
+VOLUME_DISCOUNT_RANGE_PCT = (2, 4)
+PRICE_ROUND_UZS = 10
+# Бюджет покупателя: средняя цена его закупок + запас, с округлением вверх до 100 сум.
+BUDGET_MARGIN_PCT = 5
+BUDGET_ROUND_UZS = 100
+DEPOSIT_ROUND_UZS = 1000
 
-# --- Пул и доставка ---
-POOL_MAX_DISTANCE_KM = 150
-POOL_DEFAULT_MIN_FILL_PCT = 90
-POOL_MAX_MEMBERS = 8
-POOL_MAX_PROPOSALS = 3
-TRIP_BASE_UZS = 300_000
-TRIP_PER_KM_UZS = 1_500
-TRUCK_CAPACITY_T = 25
-SAME_REGION_KM = 20
-
-# --- Оценка риска: баллы признаков и уровни ---
-RISK_SHARE_OF_SELLER_PCT = 60
-RISK_SHARE_WINDOW_DAYS = 30
-RISK_SHARE_POINTS = 40
-RISK_PRICE_BELOW_PCT = 15
-RISK_PRICE_POINTS = 30
-RISK_CHAIN_POINTS = 30
-RISK_NEWBIE_AMOUNT_UZS = 50_000_000
-RISK_NEWBIE_AMOUNT_POINTS = 20
-RISK_MEDIUM_FROM = 30
-RISK_HIGH_FROM = 60
+# --- Торги ---
+AUCTION_ROUNDS = 6
+AUCTION_ROUND_MIN = 5
+SELLER_MIN_RATING = 4.0
 
 # --- Claude ---
-AI_TIMEOUT_S = 8.0
-AI_MAX_RETRIES = 1
 AI_DEFAULT_MODEL = "claude-opus-5-5"
+AI_TIMEOUT_S = 20
+AI_MAX_RETRIES = 1
