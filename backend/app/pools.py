@@ -118,6 +118,11 @@ def create(conn: sqlite3.Connection, product: str, grade: str | None, city: str,
     if qty_t >= lot - 1:
         return None
     pid = f"{product}-{city}-2611"
+    # Пул с таким именем уже был (сделка в нем закрыта) — новый получает следующий номер.
+    n = 2
+    while conn.execute("SELECT 1 FROM pool WHERE id=?", (pid,)).fetchone():
+        pid = f"{product}-{city}-2611-{n}"
+        n += 1
     room = lot - qty_t - 1  # хотя бы 1 т остается «другим» покупателям
     queue: list[int] = []
     for part in QUEUE:

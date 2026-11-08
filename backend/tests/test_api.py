@@ -230,3 +230,18 @@ def test_product_outside_catalog_uses_ai_card(client, monkeypatch):
     p = client.get(f"/pools/{r['pool']['id']}?qty_t=10").json()
     assert p["price"]["source"] == "ai" and p["price"]["expected_uzs"] == 2910
     assert client.get(f"/pools/{POOL}").json()["price"]["source"] == "exchange"
+
+
+def test_new_request_after_settled_deal_gets_fresh_pool(client):
+    _to_deal(client)
+    client.post(f"/deals/{DEAL}/pay")
+    client.post(f"/deals/{DEAL}/confirm")
+    r = _need(client, "2 т муки в/с в Самарканд до 25 ноября")
+    pid = r["pool"]["id"]
+    assert pid != POOL and r["pool"]["joined"] is False
+    client.post(f"/pools/{pid}/join", json={"qty_t": 2})
+    a = client.get(f"/pools/{pid}/auction").json()
+    d = client.get(f"/deals/{a['deal_id']}").json()
+    assert a["deal_id"] != DEAL and d["stage"] == 1 and d["status"] == "active"
+    o = client.get("/offer").json()
+    assert o is None or o["pool"]["id"] != POOL

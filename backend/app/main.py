@@ -183,8 +183,22 @@ def offer(conn=Depends(get_conn)):
             "SELECT * FROM pool WHERE product=? AND city=? AND status='collecting' AND delivery_date<=?",
             (product, last["city"], fc["runout"]),
         ).fetchone()
-        if not row or _you(conn, row["id"]):
+        if row and _you(conn, row["id"]):
             continue
+        # Вы уже в пуле этого товара и сделка еще не закрыта — второй пул не предлагаем.
+        active = conn.execute(
+            "SELECT 1 FROM pool_member pm JOIN pool p ON p.id = pm.pool_id WHERE pm.business_id=? AND p.product=? "
+            "AND pm.pool_id NOT IN (SELECT pool_id FROM deal WHERE business_id=? AND status='settled')",
+            (seed.BUSINESS_ID, product, seed.BUSINESS_ID),
+        ).fetchone()
+        if active:
+            continue
+        if not row:
+            # Открытого пула нет (прошлый уже закрыт) — биржа собирает новый под вашу обычную закупку.
+            pid = pools.create(conn, product, last["grade"], last["city"], fc["qty_t"])
+            row = _pool_row(conn, pid) if pid else None
+            if not row or row["delivery_date"] > fc["runout"]:
+                continue
         price = F.expected_price(row["avg_exchange_uzs"])["price_uzs"]
         prod = need.PRODUCTS[product]
         grade = prod["grades"].get(last["grade"] or "")
@@ -296,9 +310,11 @@ def parse_need(body: NeedIn, conn=Depends(get_conn)):
     if not missing:
         row = conn.execute(
             # Собранный пул тоже подходит, если вы уже в нем: заявку можно открыть заново.
+            # Пул, где ваша сделка уже закрыта, не подходит: новая заявка — новый пул и новая сделка.
             "SELECT * FROM pool WHERE product=? AND city=? AND (status='collecting' OR id IN "
-            "(SELECT pool_id FROM pool_member WHERE business_id=?))",
-            (parsed["product"], city_key, seed.BUSINESS_ID),
+            "(SELECT pool_id FROM pool_member WHERE business_id=?)) "
+            "AND id NOT IN (SELECT pool_id FROM deal WHERE business_id=? AND status='settled') ORDER BY rowid DESC",
+            (parsed["product"], city_key, seed.BUSINESS_ID, seed.BUSINESS_ID),
         ).fetchone()
         # Пул создан под прошлую заявку с другим объемом и вы в нем еще не состоите — собираем заново.
         if row and row["generated"] and not _you(conn, row["id"]) and not pools.fits(conn, row["id"], parsed["qty_t"]):
