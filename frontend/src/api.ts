@@ -157,7 +157,21 @@ export type Dispute = {
   }
 }
 
+/** Голос в текст: звук уходит на бэкенд, ключ UzbekVoice живет только там. */
+async function stt(audio: Blob): Promise<{ text: string }> {
+  let res: Response
+  try {
+    res = await fetch(`${BASE}/stt`, { method: 'POST', headers: { 'Content-Type': audio.type || 'audio/webm' }, body: audio })
+  } catch {
+    throw new ApiError(0, 'network', 'Сервер не отвечает. Попробуйте еще раз или напишите текстом.')
+  }
+  const data = await res.json().catch(() => null)
+  if (!res.ok) throw new ApiError(res.status, data?.error ?? 'http', data?.message ?? `Ошибка сервера: ${res.status}`)
+  return data
+}
+
 export const api = {
+  stt,
   me: () => call<Me>('GET', '/me'),
   reset: () => call<{ ok: true }>('POST', '/demo/reset'),
   need: (turns: NeedTurn[]) =>

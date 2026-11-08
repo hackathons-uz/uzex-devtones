@@ -1,25 +1,12 @@
 import { useEffect, useRef, useState } from 'react'
+import { api } from '../api'
+import { canRecord, startRecording, type Recording } from '../components/recorder'
 import { reduceMotion } from '../format'
 import { Arrow, Cross, Check } from '../components/ui'
 import type { Draft } from '../drafts'
 
 const EXAMPLES = ['2 т муки в/с в Самарканд', 'Мука для пекарни, 2 т', '2 тонны муки до 25 ноября']
 const MAX_REC_S = 15
-
-// Web Speech API есть не во всех браузерах; где его нет, кнопки микрофона не будет.
-type Recognition = {
-  lang: string
-  interimResults: boolean
-  continuous: boolean
-  start(): void
-  stop(): void
-  abort(): void
-  onresult: ((e: { results: ArrayLike<ArrayLike<{ transcript: string }>> }) => void) | null
-  onend: (() => void) | null
-  onerror: ((e: { error: string }) => void) | null
-}
-const SpeechCtor = (window as unknown as { SpeechRecognition?: new () => Recognition; webkitSpeechRecognition?: new () => Recognition })
-const Speech = SpeechCtor.SpeechRecognition ?? SpeechCtor.webkitSpeechRecognition
 
 export function Intro({
   initial,
@@ -41,8 +28,8 @@ export function Intro({
   const [parsing, setParsing] = useState(false)
   const [voiceError, setVoiceError] = useState<string | null>(null)
   const input = useRef<HTMLTextAreaElement>(null)
-  const recog = useRef<Recognition | null>(null)
-  const heard = useRef('')
+  const recording = useRef<Recording | null>(null)
+  const levels = useRef<number[]>([])
   const bars = useRef<HTMLSpanElement>(null)
 
   useEffect(() => setValue(initial), [initial])
@@ -72,68 +59,69 @@ export function Intro({
     return () => clearInterval(id)
   }, [value, rec])
 
-  // Таймер и «волна» записи. Волна — индикатор, что микрофон слушает, а не уровень звука.
+  // Таймер записи; через 15 секунд запись отправляется сама.
   useEffect(() => {
     if (!rec) return
-    let tick = 0
     const id = setInterval(() => {
-      tick++
       const secs = Math.floor((Date.now() - rec.start) / 1000)
       setRec((r) => (r ? { ...r, secs } : r))
-      if (!reduceMotion() && bars.current) {
-        Array.from(bars.current.children).forEach((b, k) => {
-          const base = 0.25 + 0.55 * Math.abs(Math.sin((k + tick) / 4))
-          ;(b as HTMLElement).style.height = Math.round(base * (0.5 + Math.random() * 0.7) * 100) + '%'
-        })
-      }
       if (secs >= MAX_REC_S) finishRec()
-    }, 90)
+    }, 200)
     return () => clearInterval(id)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [rec?.start])
 
-  function startRec() {
-    if (!Speech || rec) return
-    setVoiceError(null)
-    heard.current = ''
-    const r = new Speech()
-    r.lang = 'ru-RU'
-    r.interimResults = true
-    r.continuous = true
-    r.onresult = (e) => {
-      heard.current = Array.from(e.results)
-        .map((x) => x[0].transcript)
-        .join(' ')
-    }
-    r.onerror = (e) => {
-      setVoiceError(e.error === 'not-allowed' ? 'Нет доступа к микрофону. Разрешите его в браузере или напишите текстом.' : 'Не получилось распознать голос. Попробуйте еще раз или напишите текстом.')
-      setRec(null)
-      setParsing(false)
-    }
-    r.onend = () => {
-      setParsing(false)
-      if (heard.current) setValue(heard.current.trim())
-      input.current?.focus()
-    }
-    recog.current = r
-    r.start()
-    setRec({ start: Date.now(), secs: 0 })
+  // «Волна» — настоящая громкость с микрофона: новые значения справа, старые уходят влево.
+  function onLevel(level: number) {
+    const el = bars.current
+    if (!el || reduceMotion()) return
+    const list = levels.current
+    list.push(level)
+    if (list.length > el.children.length) list.shift()
+    const offset = el.children.length - list.length
+    Array.from(el.children).forEach((b, k) => {
+      const v = k < offset ? 0 : list[k - offset]
+      ;(b as HTMLElement).style.height = Math.round(12 + v * 88) + '%'
+    })
   }
-  function finishRec() {
+
+  async function startRec() {
+    if (rec || parsing) return
+    setVoiceError(null)
+    levels.current = []
+    try {
+      recording.current = await startRecording(onLevel)
+      setRec({ start: Date.now(), secs: 0 })
+    } catch (e) {
+      const denied = (e as Error).name === 'NotAllowedError'
+      setVoiceError(denied ? 'Нет доступа к микрофону. Разрешите его в браузере или напишите текстом.' : 'Микрофон недоступен. Напишите текстом.')
+    }
+  }
+  async function finishRec() {
+    const r = recording.current
+    if (!r) return
+    recording.current = null
     setRec(null)
     setParsing(true)
-    recog.current?.stop()
+    try {
+      const audio = await r.stop()
+      const { text } = await api.stt(audio)
+      setValue(text)
+      input.current?.focus()
+    } catch (e) {
+      setVoiceError((e as Error).message)
+    } finally {
+      setParsing(false)
+    }
   }
   function cancelRec() {
-    recog.current?.abort()
-    recog.current = null
-    heard.current = ''
+    recording.current?.cancel()
+    recording.current = null
     setRec(null)
-    setParsing(false)
   }
 
   function send() {
-    const t = value.trim() || (rec ? '' : EXAMPLES[exI])
+    const t = value.trim() || (rec || parsing ? '' : EXAMPLES[exI])
     if (t) onSend(t)
   }
 
@@ -186,7 +174,7 @@ export function Intro({
             </div>
           )}
         </div>
-        {Speech && (
+        {canRecord() && (
           <button className="mic mic-solo" type="button" aria-label="Сказать голосом" onClick={startRec}>
             <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true">
               <rect x="9" y="3" width="6" height="11" rx="3" />
@@ -196,7 +184,7 @@ export function Intro({
         )}
       </div>
       {rec ? (
-        <p className="rec-hint">Говорите своими словами, по-русски</p>
+        <p className="rec-hint">Говорите своими словами, на узбекском или русском</p>
       ) : (
         <p className="intro-hint">{voiceError ?? 'Своими словами, текстом или голосом, на узбекском или русском. Коды товаров знать не нужно.'}</p>
       )}
