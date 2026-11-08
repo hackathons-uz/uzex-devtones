@@ -193,3 +193,40 @@ def test_any_product_gets_own_pool(client):
     assert s["decision"]["shortfall_kg"] == 210 and s["decision"]["refund_uzs"] == 210 * 1120 and s["decision"]["fault"] == "hub"
     d = _need(client, "дизель 10 тонн в Бухару, срок не важен")
     assert d["pool"]["id"] == "diesel-bukhara-2611" and d["pool"]["lot_unit"] == "цистерна"
+
+
+def test_product_outside_catalog_uses_ai_card(client, monkeypatch):
+    from app import ai
+
+    card = {
+        "is_commodity": True,
+        "name": "Карбамид",
+        "standard": None,
+        "avg_uzs_per_kg": 3000,
+        "retail_uzs_per_kg": 3600,
+        "lot_t": 60,
+        "lot_unit": "вагон",
+        "who": ["ферма", "фермы", "ферм"],
+        "audience": "Пул фермеров",
+        "sellers": [{"short": f"Agro {k}", "about": "Завод, Навои"} for k in range(5)],
+    }
+    monkeypatch.setattr(
+        ai,
+        "parse_need",
+        lambda msgs, today: {
+            "product": "other",
+            "other_name": "Карбамид",
+            "grade": None,
+            "qty_t": 10,
+            "city": "fergana",
+            "due_day": 30,
+            "due_month": 11,
+            "due_flexible": False,
+        },
+    )
+    monkeypatch.setattr(ai, "describe_product", lambda name: card)
+    r = _need(client, "10 т карбамида в Фергану до 30 ноября")
+    assert r["spec"]["product"] == "Карбамид" and r["pool"]["who"] in ("фермы", "ферм")
+    p = client.get(f"/pools/{r['pool']['id']}?qty_t=10").json()
+    assert p["price"]["source"] == "ai" and p["price"]["expected_uzs"] == 2910
+    assert client.get(f"/pools/{POOL}").json()["price"]["source"] == "exchange"

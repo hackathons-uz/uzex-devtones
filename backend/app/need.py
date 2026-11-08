@@ -1,5 +1,6 @@
 """Заявка своими словами -> поля заявки. Разбор без ИИ: запасной путь и проверка ответа Claude."""
 
+import hashlib
 import re
 from datetime import date, timedelta
 
@@ -100,6 +101,32 @@ PRODUCTS = {
         "lot": ("вагон", "вагонами"),
     },
 }
+UNIT_INS = {"вагон": "вагонами", "цистерна": "цистернами", "фура": "фурами"}
+
+
+def ai_key(name: str) -> str:
+    """Ключ товара вне каталога: по названию, чтобы одинаковый товар попадал в один пул."""
+    return "ai-" + hashlib.sha1(name.strip().lower().encode()).hexdigest()[:10]
+
+
+def register(key: str, card: dict) -> None:
+    """Товар вне каталога по карточке от Claude. ai_price: цены — оценка ИИ, экран это подписывает."""
+    PRODUCTS[key] = {
+        "name": card["name"],
+        "keywords": [],
+        "grades": {},
+        "standard": card["standard"] or "",
+        "avg": round(card["avg_uzs_per_kg"]),
+        "retail": round(card["retail_uzs_per_kg"]),
+        "who": tuple(card["who"]),
+        "audience": card["audience"],
+        "lot": (card["lot_unit"], UNIT_INS[card["lot_unit"]]),
+        "lot_t": round(card["lot_t"]),
+        "sellers": [(s["short"], s["about"]) for s in card["sellers"]],
+        "ai_price": True,
+    }
+
+
 CITIES = {
     "samarkand": {"name": "Самарканд", "hub": "Самарканд, склад «Север»", "keywords": [r"самарканд", r"samarqand", r"samarkand"]},
     "tashkent": {"name": "Ташкент", "hub": "Ташкент, склад «Сергели»", "keywords": [r"ташкент", r"toshkent", r"tashkent"]},

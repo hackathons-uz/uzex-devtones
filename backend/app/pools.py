@@ -113,16 +113,17 @@ def fits(conn: sqlite3.Connection, pool_id: str, qty_t: float) -> bool:
 
 def create(conn: sqlite3.Connection, product: str, grade: str | None, city: str, qty_t: float) -> str | None:
     """Новый пул под заявку. None — объем слишком большой для пула (почти целый лот)."""
-    if qty_t >= LOT_T - 1:
-        return None
     p = need.PRODUCTS[product]
+    lot = p.get("lot_t", LOT_T)
+    if qty_t >= lot - 1:
+        return None
     pid = f"{product}-{city}-2611"
-    room = LOT_T - qty_t - 1  # хотя бы 1 т остается «другим» покупателям
+    room = lot - qty_t - 1  # хотя бы 1 т остается «другим» покупателям
     queue: list[int] = []
     for part in QUEUE:
         if sum(queue) + part <= min(sum(QUEUE), room):
             queue.append(part)
-    others_t = LOT_T - qty_t - sum(queue)
+    others_t = lot - qty_t - sum(queue)
     others = max(1, round(others_t / AVG_SHARE_T))
     g = p["grades"].get(grade or "")
     title = p["name"] + (f" {g[0]}" if g else "")
@@ -135,7 +136,7 @@ def create(conn: sqlite3.Connection, product: str, grade: str | None, city: str,
             city,
             title,
             p["audience"],
-            LOT_T,
+            lot,
             p["lot"][0],
             (C.DEMO_TODAY + timedelta(days=DEADLINE_DAYS)).isoformat(),
             (C.DEMO_TODAY + timedelta(days=DELIVERY_DAYS)).isoformat(),
@@ -159,7 +160,7 @@ def create(conn: sqlite3.Connection, product: str, grade: str | None, city: str,
             (pid, None, f"Заявка {i + 1}", part, "queued"),
         )
     base = F.expected_price(p["avg"])["price_uzs"]
-    names = SELLERS.get(product, [(f"Поставщик {k + 1}", "Опт") for k in range(5)])
+    names = SELLERS.get(product) or p.get("sellers") or [(f"Поставщик {k + 1}", "Опт") for k in range(5)]
     for k, ((short, about), (rating, on_time, disputes), bids) in enumerate(zip(names, SELLER_RATINGS, _bids(base), strict=True)):
         conn.execute(
             "INSERT INTO seller VALUES (?,?,?,?,?,?,?,?,?,?)",

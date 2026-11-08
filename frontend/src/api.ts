@@ -101,6 +101,7 @@ export type Pool = {
     avg_month: string
     volume_discount_pct: [number, number]
     sellers_confirmed: number
+    source: 'exchange' | 'ai'
   }
   trust: {
     rating: number

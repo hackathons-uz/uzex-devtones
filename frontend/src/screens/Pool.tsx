@@ -180,12 +180,15 @@ export function Pool({
               <span className="num">{fmt(p.order_uzs)} сум</span> за {qtyText} т
             </span>
           </p>
+          {p.source === 'ai' && (
+            <p className="src">Ориентир цены — оценка ИИ: этого товара нет в каталоге биржи. Точную цену покажут торги.</p>
+          )}
           <details>
             <summary>Как посчитано</summary>
             <div className="in">
               <dl className="calc">
                 <div>
-                  <dt>Средняя цена на бирже в {MONTH_IN[p.avg_month] ?? p.avg_month}</dt>
+                  <dt>{p.source === 'ai' ? 'Оценка ИИ: средняя биржевая цена' : `Средняя цена на бирже в ${MONTH_IN[p.avg_month] ?? p.avg_month}`}</dt>
                   <dd className="num">{fmt(p.avg_exchange_uzs)}</dd>
                 </div>
                 <div>

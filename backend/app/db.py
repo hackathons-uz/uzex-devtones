@@ -86,6 +86,10 @@ CREATE TABLE IF NOT EXISTS evidence (
   certificate_ok INTEGER NOT NULL,
   confirmed_others INTEGER NOT NULL
 );
+CREATE TABLE IF NOT EXISTS product_ai (
+  key TEXT PRIMARY KEY,
+  card TEXT NOT NULL               -- JSON: карточка товара от Claude, цены — оценка ИИ
+);
 CREATE TABLE IF NOT EXISTS log (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   at TEXT NOT NULL,

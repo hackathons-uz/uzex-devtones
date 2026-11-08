@@ -71,6 +71,9 @@ def _ensure_db() -> None:
         conn.executescript(db.SCHEMA)
         if not conn.execute("SELECT 1 FROM business LIMIT 1").fetchone():
             seed.seed(conn)
+        # Товары вне каталога, которые Claude уже описал: переживают перезапуск, пока жива база.
+        for r in conn.execute("SELECT key, card FROM product_ai"):
+            need.register(r["key"], json.loads(r["card"]))
     _db_ready = True
 
 
@@ -248,8 +251,11 @@ def parse_need(body: NeedIn, conn=Depends(get_conn)):
     if by_ai is not None:
         source = "ai"
         due = (by_ai["due_day"], by_ai["due_month"]) if by_ai["due_day"] and by_ai["due_month"] else None
+        product_key = by_ai["product"]
+        if product_key == "other":
+            product_key = _ai_product(conn, by_ai.get("other_name"))
         parsed = {
-            "product": by_ai["product"],
+            "product": product_key,
             "grade": by_ai["grade"],
             "qty_t": by_ai["qty_t"],
             "city": by_ai["city"],
@@ -273,8 +279,7 @@ def parse_need(body: NeedIn, conn=Depends(get_conn)):
     spec = {
         "product": product["name"]
         + (", " + product["grades"][parsed["grade"]][0] if parsed["grade"] in product["grades"] else "")
-        + ", "
-        + product["standard"]
+        + (", " + product["standard"] if product["standard"] else "")
         if product
         else None,
         "qty_t": _fmt_t(parsed["qty_t"]) if parsed["qty_t"] else None,
@@ -321,6 +326,22 @@ def parse_need(body: NeedIn, conn=Depends(get_conn)):
     return {"spec": spec, "missing": missing, "question": question, "pool": pool, "pool_late": late, "source": source}
 
 
+def _ai_product(conn, name: str | None) -> str | None:
+    """Товар вне каталога: карточку с ориентиром цен дает Claude, код проверяет и запоминает."""
+    if not name:
+        return None
+    key = need.ai_key(name)
+    if key in need.PRODUCTS:
+        return key
+    card = ai.describe_product(name)
+    if not card:
+        return None
+    need.register(key, card)
+    conn.execute("INSERT OR REPLACE INTO product_ai VALUES (?,?)", (key, db.dumps(card)))
+    db.log(conn, "product_ai", {"key": key, "name": card["name"], "avg": card["avg_uzs_per_kg"], "retail": card["retail_uzs_per_kg"]})
+    return key
+
+
 # ---------- 2. Пул и задаток ----------
 
 
@@ -363,6 +384,8 @@ def _pool_view(conn, pool_id: str, qty_t: float) -> dict:
             "avg_month": p["avg_month"],
             "volume_discount_pct": price["discount_range_pct"],
             "sellers_confirmed": sum(1 for s in sellers if s["rating"] >= C.SELLER_MIN_RATING),
+            # exchange — данные биржи (каталог), ai — ориентир цены от Claude для товара вне каталога.
+            "source": "ai" if need.PRODUCTS[p["product"]].get("ai_price") else "exchange",
         },
         "trust": trust,
         "you": {"joined": bool(you), "deposit_uzs": you["deposit_uzs"] if you else None},

@@ -35,7 +35,8 @@ SYSTEM_NEED = (
     "Заполняй только то, что прямо сказано в тексте; остальное оставь null. "
     "product — ключ товара из каталога: flour мука (un), sugar сахар (shakar), cement цемент (sement), "
     "diesel дизельное топливо (солярка, dizel), wheat пшеница (bug‘doy), rice рис (guruch), oil масло подсолнечное (yog‘), "
-    "rebar арматура; если товара нет в каталоге — null. grade: top — высший сорт муки (в/с, oliy nav), "
+    "rebar арматура; другой биржевой товар (хлопок, газ, удобрения, уголь и т.п.) — other, "
+    "и его название по-русски в именительном падеже в other_name (например «Карбамид»); товар не назван — null. grade: top — высший сорт муки (в/с, oliy nav), "
     "m500 и m400 — марки цемента, euro5 — дизель Евро-5; иначе null. "
     "city: samarkand, tashkent, bukhara, fergana, andijan, namangan, navoi, karshi, nukus или null. "
     "qty_t — объем в тоннах (2000 кг = 2). due_day и due_month — срок «до какого числа»; "
@@ -48,7 +49,10 @@ NEED_SCHEMA = {
     "type": "object",
     "properties": {
         "product": {
-            "anyOf": [{"type": "string", "enum": ["flour", "sugar", "cement", "diesel", "wheat", "rice", "oil", "rebar"]}, {"type": "null"}]
+            "anyOf": [
+                {"type": "string", "enum": ["flour", "sugar", "cement", "diesel", "wheat", "rice", "oil", "rebar", "other"]},
+                {"type": "null"},
+            ]
         },
         "grade": {"anyOf": [{"type": "string", "enum": ["top", "m500", "m400", "euro5"]}, {"type": "null"}]},
         "qty_t": {"type": ["number", "null"]},
@@ -64,8 +68,9 @@ NEED_SCHEMA = {
         "due_day": {"type": ["integer", "null"]},
         "due_month": {"type": ["integer", "null"]},
         "due_flexible": {"type": "boolean"},
+        "other_name": {"type": ["string", "null"]},
     },
-    "required": ["product", "grade", "qty_t", "city", "due_day", "due_month", "due_flexible"],
+    "required": ["product", "grade", "qty_t", "city", "due_day", "due_month", "due_flexible", "other_name"],
     "additionalProperties": False,
 }
 
@@ -76,7 +81,53 @@ AUCTION_SCHEMA = {
     "additionalProperties": False,
 }
 
-PROMPTS_VERSION = SYSTEM_AUCTION + SYSTEM_NEED
+SYSTEM_PRODUCT = (
+    "Ты справочник товарно-сырьевой биржи Узбекистана (UZEX). По названию товара верни его карточку. "
+    "Цены — твоя оценка средних оптовых биржевых цен в Узбекистане за октябрь 2026 и розницы, в сумах за килограмм. "
+    "Если это не биржевой товар (услуга, недвижимость, штучный товар), верни is_commodity false. "
+    "lot_t — типичный размер лота на бирже в тоннах, lot_unit — вагон, цистерна или фура. "
+    "who — кто обычно покупает, во множественном числе в трех формах для 1, 2 и 5 (например: ферма, фермы, ферм). "
+    "sellers — 5 вымышленных поставщиков с узбекскими названиями латиницей и описанием по-русски вида «Завод, Навои»."
+)
+
+PRODUCT_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "is_commodity": {"type": "boolean"},
+        "name": {"type": "string"},
+        "standard": {"type": ["string", "null"]},
+        "avg_uzs_per_kg": {"type": "number"},
+        "retail_uzs_per_kg": {"type": "number"},
+        "lot_t": {"type": "number"},
+        "lot_unit": {"type": "string", "enum": ["вагон", "цистерна", "фура"]},
+        "who": {"type": "array", "items": {"type": "string"}},
+        "audience": {"type": "string"},
+        "sellers": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {"short": {"type": "string"}, "about": {"type": "string"}},
+                "required": ["short", "about"],
+                "additionalProperties": False,
+            },
+        },
+    },
+    "required": [
+        "is_commodity",
+        "name",
+        "standard",
+        "avg_uzs_per_kg",
+        "retail_uzs_per_kg",
+        "lot_t",
+        "lot_unit",
+        "who",
+        "audience",
+        "sellers",
+    ],
+    "additionalProperties": False,
+}
+
+PROMPTS_VERSION = SYSTEM_AUCTION + SYSTEM_NEED + SYSTEM_PRODUCT
 
 _client = None
 # Последняя ошибка Claude для /health: тип и код, без ключа и без текста запроса.
@@ -247,6 +298,33 @@ def parse_need(messages: list[str], today: str) -> dict | None:
     except json.JSONDecodeError:
         log.warning("Claude вернул не JSON: %r", raw[:200])
         return None
+
+
+def describe_product(name: str) -> dict | None:
+    """Карточка товара вне каталога: оценка цен и лота от Claude. Код проверяет числа; плохой ответ — None.
+
+    Это ориентир, а не биржевые данные: экран так и подписывает. Считают по нему формулы кода.
+    """
+    raw, _ = _cached({"product": name.strip().lower()}, lambda: _call(SYSTEM_PRODUCT, name, PRODUCT_SCHEMA))
+    if not raw:
+        return None
+    try:
+        d = json.loads(raw)
+    except json.JSONDecodeError:
+        return None
+    ok = (
+        d["is_commodity"]
+        and 50 <= d["avg_uzs_per_kg"] <= 2_000_000
+        and d["avg_uzs_per_kg"] * 1.02 <= d["retail_uzs_per_kg"] <= d["avg_uzs_per_kg"] * 3
+        and 5 <= d["lot_t"] <= 200
+        and len(d["who"]) == 3
+        and len(d["sellers"]) == 5
+    )
+    if not ok:
+        global last_error
+        last_error = "rejected_product: числа вне разумных границ или не биржевой товар"
+        return None
+    return d
 
 
 def explain_auction(payload: dict, fallback: list[str]) -> tuple[list[str], str]:
