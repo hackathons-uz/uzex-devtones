@@ -270,7 +270,7 @@ export function Need({
               ref={input}
               rows={1}
               aria-label="Сообщение для Davra"
-              maxLength={500}
+              maxLength={2000}
               enterKeyHint="send"
               placeholder={ask ? 'Ваш ответ' : 'Что поменять в заявке?'}
               value={answer}

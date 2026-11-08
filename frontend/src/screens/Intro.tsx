@@ -147,7 +147,7 @@ export function Intro({
             ref={input}
             rows={1}
             aria-label="Что нужно вашему бизнесу"
-            maxLength={500}
+            maxLength={2000}
             enterKeyHint="send"
             placeholder={placeholder}
             className={phOut ? 'ph-out' : ''}

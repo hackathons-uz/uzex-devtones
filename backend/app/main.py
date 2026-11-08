@@ -222,8 +222,8 @@ async def speech_to_text(request: Request):
 
 class NeedIn(BaseModel):
     # Первое сообщение и ответы на уточняющие вопросы, по порядку.
-    # До 30 сообщений по 500 знаков: защита от огромных запросов к Claude, обычному чату хватает с запасом.
-    messages: list[Annotated[str, Field(max_length=500)]] = Field(min_length=1, max_length=30)
+    # До 30 сообщений по 2 000 знаков: защита от огромных запросов к Claude, обычному чату хватает с запасом.
+    messages: list[Annotated[str, Field(max_length=2000)]] = Field(min_length=1, max_length=30)
     # На какой вопрос отвечает каждое сообщение (у первого — None): «2» в ответ на вопрос об объеме — это 2 т.
     asked: list[str | None] = Field(default_factory=list, max_length=30)
 
