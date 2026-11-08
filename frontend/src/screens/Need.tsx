@@ -61,8 +61,12 @@ function Complete({ r, step, first }: { r: NeedResult; step: number; first: bool
               {s.due_text}
               {s.due_source === 'flexible' && <span className="muted"> · срок не важен, ближайшая поставка</span>}
             </dd>
-            <dt>Бюджет</dt>
-            <dd>до {fmt(s.budget_uzs)} сум/кг, по вашей истории закупок</dd>
+            {s.budget_uzs !== null && (
+              <>
+                <dt>Бюджет</dt>
+                <dd>до {fmt(s.budget_uzs)} сум/кг, по вашей истории закупок</dd>
+              </>
+            )}
           </dl>
           {r.source === 'template' && (
             <p className="src" style={{ marginTop: 10 }}>

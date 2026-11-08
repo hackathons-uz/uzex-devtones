@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { api, type Auction as AuctionT, type Deal as DealT, type Me, type Pool as PoolT } from './api'
+import { api, type Auction as AuctionT, type Deal as DealT, type Me, type Offer, type Pool as PoolT } from './api'
 import { Logo, LogoSymbols } from './components/Logo'
 import { Check, Cross } from './components/ui'
 import { readDrafts, readSession, saveDraft, writeDrafts, writeSession, type Draft } from './drafts'
@@ -49,6 +49,28 @@ export function App() {
   // Цена вопроса для карточки рейтинга: задаток до сделки.
   const depositBefore = useRef<number | null>(null)
 
+  // Предложение без запроса. «Не сейчас» прячет его до конца сессии вкладки.
+  const [offer, setOffer] = useState<Offer | null>(null)
+  const loadOffer = useCallback(() => {
+    let hidden = false
+    try {
+      hidden = sessionStorage.getItem('davra-offer-hidden') === '1'
+    } catch {
+      /* без хранилища просто покажем снова */
+    }
+    if (hidden) return setOffer(null)
+    // Предложение — подсказка: если сервер не ответил, главная работает и без него.
+    api.offer().then(setOffer, () => setOffer(null))
+  }, [])
+  function dismissOffer() {
+    try {
+      sessionStorage.setItem('davra-offer-hidden', '1')
+    } catch {
+      /* ничего */
+    }
+    setOffer(null)
+  }
+
   const loadMe = useCallback(() => {
     setMeError(false)
     api
@@ -57,6 +79,7 @@ export function App() {
       .catch(() => setMeError(true))
   }, [])
   useEffect(loadMe, [loadMe])
+  useEffect(loadOffer, [loadOffer])
 
   useEffect(() => {
     writeSession(text ? { text, poolId, qty, dealId } : null)
@@ -111,6 +134,7 @@ export function App() {
     setDealId(null)
     setDeal(null)
     depositBefore.current = null
+    loadOffer()
     setSideOpen(false)
     history.replaceState(null, '', location.pathname)
   }
@@ -137,6 +161,11 @@ export function App() {
   async function resetDemo() {
     try {
       await api.reset()
+      try {
+        sessionStorage.removeItem('davra-offer-hidden')
+      } catch {
+        /* ничего */
+      }
       clearFlow()
       setComposerText('')
       loadMe()
@@ -316,7 +345,7 @@ export function App() {
           </header>
           <div className="shell" lang="ru">
             {!started ? (
-              <Intro initial={composerText} drafts={drafts} onSend={send} onPickDraft={pickDraft} onShowDrafts={() => setSideOpen(true)} />
+              <Intro initial={composerText} offer={offer} onDismissOffer={dismissOffer} drafts={drafts} onSend={send} onPickDraft={pickDraft} onShowDrafts={() => setSideOpen(true)} />
             ) : (
               <>
                 <nav className="stepper" aria-label="Шаги сделки">

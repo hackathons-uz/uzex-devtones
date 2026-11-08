@@ -1,21 +1,29 @@
 import { useEffect, useRef, useState } from 'react'
-import { api } from '../api'
+import { api, type Offer } from '../api'
+import { Mark } from '../components/Logo'
+import { fmt, plural } from '../format'
 import { canRecord, startRecording, type Recording } from '../components/recorder'
 import { reduceMotion } from '../format'
 import { Arrow, Cross, Check } from '../components/ui'
 import type { Draft } from '../drafts'
+
+const fmtQty = (n: number) => String(n).replace('.', ',')
 
 const EXAMPLES = ['2 т муки в/с в Самарканд', 'Мука для пекарни, 2 т', '2 тонны муки до 25 ноября']
 const MAX_REC_S = 15
 
 export function Intro({
   initial,
+  offer,
+  onDismissOffer,
   drafts,
   onSend,
   onPickDraft,
   onShowDrafts,
 }: {
   initial: string
+  offer: Offer | null
+  onDismissOffer: () => void
   drafts: Draft[]
   onSend: (text: string) => void
   onPickDraft: (t: string) => void
@@ -187,6 +195,31 @@ export function Intro({
         <p className="rec-hint">Говорите своими словами, на узбекском или русском</p>
       ) : (
         <p className="intro-hint">{voiceError ?? 'Своими словами, текстом или голосом, на узбекском или русском. Коды товаров знать не нужно.'}</p>
+      )}
+      {offer && !rec && (
+        <div className="offer msg ai fade">
+          <span className="av">
+            <Mark />
+          </span>
+          <div className="b">
+            <span className="who">Агент биржи · по вашим закупкам</span>
+            <p>
+              Вы берёте {fmtQty(offer.qty_t)} т раз в {offer.forecast.interval_days} {plural(offer.forecast.interval_days, 'день', 'дня', 'дней')}, последний раз {offer.forecast.last_text}. {offer.product} закончится примерно{' '}
+              <b>{offer.forecast.runout_text}</b>.
+            </p>
+            <p>
+              Под это уже собирается пул из {offer.pool.members} покупателей: ожидаемая цена {fmt(offer.pool.price_uzs)} сум/кг, на {offer.pool.discount_pct}% ниже розницы, поставка {offer.pool.delivery_text}.
+            </p>
+            <div className="row">
+              <button className="btn sm" type="button" onClick={() => onSend(offer.draft)}>
+                Собрать заявку <Arrow />
+              </button>
+              <button className="btn sm ghost" type="button" onClick={onDismissOffer}>
+                Не сейчас
+              </button>
+            </div>
+          </div>
+        </div>
       )}
       {drafts.length > 0 && (
         <div className="resume">

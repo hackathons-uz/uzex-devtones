@@ -47,7 +47,7 @@ export type NeedResult = {
     due: string | null
     due_text: string | null
     due_source: 'given' | 'flexible' | 'missing' | 'past'
-    budget_uzs: number
+    budget_uzs: number | null
   }
   missing: NeedField[]
   question: string | null
@@ -58,6 +58,21 @@ export type NeedResult = {
 
 /** Одно сообщение покупателя и вопрос, на который оно отвечает. */
 export type NeedTurn = { text: string; asked: NeedField | null }
+
+/** Биржа предлагает сама: прогноз по истории закупок и пул, который успевает к сроку. */
+export type Offer = {
+  product: string
+  qty_t: number
+  forecast: {
+    purchases: number
+    interval_days: number
+    runout_text: string
+    last_text: string
+    days_left: number
+  }
+  pool: { id: string; members: number; price_uzs: number; discount_pct: number; delivery_text: string }
+  draft: string
+}
 
 export type Factor = { key: string; label: string; points: number; deposit_pp: number }
 
@@ -174,6 +189,7 @@ export const api = {
   stt,
   me: () => call<Me>('GET', '/me'),
   reset: () => call<{ ok: true }>('POST', '/demo/reset'),
+  offer: () => call<Offer | null>('GET', '/offer'),
   need: (turns: NeedTurn[]) =>
     call<NeedResult>('POST', '/need', { messages: turns.map((t) => t.text), asked: turns.map((t) => t.asked) }),
   pool: (id: string, qty_t: number) => call<Pool>('GET', `/pools/${id}?qty_t=${qty_t}`),

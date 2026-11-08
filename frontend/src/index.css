@@ -363,3 +363,7 @@ body.has-bar .shell { padding-bottom:120px; }
 @media (max-width:560px) { .actbar .row:has(.composer.reply) { flex-wrap:wrap; } .actbar .row:has(.composer.reply) > .composer.reply { flex:1 1 100%; } }
 .composer.reply textarea:disabled { opacity:.6; }
 @media (max-width:560px) { body.has-bar:has(.actbar .composer.reply) .shell { padding-bottom:180px; } }
+/* предложение биржи на главной: пузырь агента под полем ввода, текст слева */
+.intro .offer { width:100%; max-width:720px; max-width:min(720px, 100%); margin-top:10px; text-align:left; }
+.intro .offer .b { display:flex; flex-direction:column; gap:8px; }
+.intro .offer .row { margin-top:4px; }
