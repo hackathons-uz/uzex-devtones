@@ -478,6 +478,7 @@ def get_auction(pool_id: str, conn=Depends(get_conn)):
         **r,
         "below_retail_pct": retail_pct,
         "below_avg_pct": avg_pct,
+        "retail_uzs": p["retail_uzs"],
         "explain": {"points": points, "source": source},
         "deal_id": seed.DEAL_ID if you else None,
     }
