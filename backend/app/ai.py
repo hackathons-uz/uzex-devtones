@@ -40,10 +40,10 @@ SYSTEM_NEED = (
 NEED_SCHEMA = {
     "type": "object",
     "properties": {
-        "product": {"type": ["string", "null"], "enum": ["flour", None]},
-        "grade": {"type": ["string", "null"], "enum": ["top", None]},
+        "product": {"anyOf": [{"type": "string", "enum": ["flour"]}, {"type": "null"}]},
+        "grade": {"anyOf": [{"type": "string", "enum": ["top"]}, {"type": "null"}]},
         "qty_t": {"type": ["number", "null"]},
-        "city": {"type": ["string", "null"], "enum": ["samarkand", "tashkent", None]},
+        "city": {"anyOf": [{"type": "string", "enum": ["samarkand", "tashkent"]}, {"type": "null"}]},
         "due_day": {"type": ["integer", "null"]},
         "due_month": {"type": ["integer", "null"]},
     },
