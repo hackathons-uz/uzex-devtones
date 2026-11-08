@@ -35,7 +35,7 @@ export type Source = 'ai' | 'template'
 
 export type Me = { id: string; name: string; initials: string; city: string; rating: number; deposit_pct: number }
 
-export type NeedField = 'product' | 'qty_t' | 'due'
+export type NeedField = 'product' | 'qty_t' | 'city' | 'due'
 
 export type NeedResult = {
   spec: {

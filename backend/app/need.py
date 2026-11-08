@@ -282,25 +282,43 @@ def resolve_due(due: tuple[int, int] | None, flexible: bool, today: date = C.DEM
 PARTS = {
     "product": "какой товар нужен (например, мука, цемент, дизель, сахар)",
     "qty_t": "сколько нужно — в тоннах или килограммах",
+    "city": "куда доставить ({usual}, как обычно, или в другой город)",
     "due": "к какому числу нужна поставка (если срок не важен, так и напишите)",
     "past": "к какому числу нужна поставка — названная дата уже прошла",
 }
 
 
-def question(missing: list[str], due_past: bool) -> str | None:
+# Ответ на вопрос о городе «как обычно» — город из профиля бизнеса.
+USUAL = re.compile(r"(как обычно|как всегда|туда же|туда|обычн|^\s*(да|da|ha|ок|ok)\b|odatdagidek|o.?sha\b|xuddi)", re.IGNORECASE)
+CITY_IN = {
+    "Самарканд": "Самарканд",
+    "Ташкент": "Ташкент",
+    "Бухара": "Бухару",
+    "Фергана": "Фергану",
+    "Андижан": "Андижан",
+    "Наманган": "Наманган",
+    "Навои": "Навои",
+    "Карши": "Карши",
+    "Нукус": "Нукус",
+}
+
+
+def question(missing: list[str], due_past: bool, usual_city: str = "") -> str | None:
     """Один вопрос сразу обо всем, чего не хватает. Одно поле — короткий вопрос, несколько — список."""
     if not missing:
         return None
     keys = ["past" if k == "due" and due_past else k for k in missing]
+    usual = CITY_IN.get(usual_city, usual_city)
     if len(keys) == 1:
-        return QUESTIONS[keys[0]]
-    parts = [PARTS[k] for k in keys]
+        return QUESTIONS[keys[0]].format(usual=usual)
+    parts = [PARTS[k].format(usual=usual) for k in keys]
     return "Уточните, пожалуйста: " + ", ".join(parts[:-1]) + " и " + parts[-1] + "."
 
 
 QUESTIONS = {
     "product": "Какой товар нужен? Например: мука, сахар, цемент, дизельное топливо, пшеница, рис, масло или арматура.",
     "qty_t": "Сколько нужно? Можно в тоннах или килограммах.",
+    "city": "Куда доставить: в {usual}, как обычно, или в другой город?",
     "due": "К какому числу нужна поставка? Если срок не важен, так и напишите.",
     "past": "Эта дата уже прошла. К какому числу нужна поставка?",
 }

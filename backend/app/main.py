@@ -283,10 +283,16 @@ def parse_need(body: NeedIn, conn=Depends(get_conn)):
 
     b = _business(conn)
     # Город не назван — берем из профиля бизнеса и показываем это в заявке, без вопроса.
-    missing = [k for k in ("product", "qty_t") if not parsed[k] or (k == "qty_t" and parsed[k] <= 0)]
+    # Город спрашиваем всегда; ответ «как обычно» на этот вопрос — город из профиля.
+    profile_city = False
+    # Вопрос мог быть общим (объем, город и срок сразу), поэтому годится ответ на любой вопрос агента.
+    if not parsed["city"] and any(a is not None and need.USUAL.search(x) for x, a in pairs):
+        parsed["city"] = b["city"]
+        profile_city = True
+    missing = [k for k in ("product", "qty_t", "city") if not parsed[k] or (k == "qty_t" and parsed[k] <= 0)]
     if due_source in ("missing", "past"):
         missing.append("due")
-    question = need.question(missing, due_source == "past")
+    question = need.question(missing, due_source == "past", need.CITIES[b["city"]]["name"])
     product = need.PRODUCTS.get(parsed["product"] or "")
     city = need.CITIES.get(parsed["city"] or "") or need.CITIES[b["city"]]
     city_key = parsed["city"] or b["city"]
@@ -298,7 +304,7 @@ def parse_need(body: NeedIn, conn=Depends(get_conn)):
         else None,
         "qty_t": _fmt_t(parsed["qty_t"]) if parsed["qty_t"] else None,
         "city": city["name"],
-        "city_from_profile": not parsed["city"],
+        "city_from_profile": profile_city,
         "hub": city["hub"],
         "due": due_date.isoformat() if due_date and due_source != "past" else None,
         "due_text": F.date_ru(due_date) if due_date and due_source != "past" else None,

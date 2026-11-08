@@ -53,7 +53,7 @@ def test_need_past_or_early_due(client):
 
 
 def test_need_unknown_product(client):
-    r = _need(client, "золото 20 т до 30 ноября")
+    r = _need(client, "золото 20 т в Ташкент до 30 ноября")
     assert r["pool"] is None and r["missing"] == ["product"]
 
 
@@ -245,3 +245,12 @@ def test_new_request_after_settled_deal_gets_fresh_pool(client):
     assert a["deal_id"] != DEAL and d["stage"] == 1 and d["status"] == "active"
     o = client.get("/offer").json()
     assert o is None or o["pool"]["id"] != POOL
+
+
+def test_city_is_asked_and_usual_means_profile(client):
+    r = _need(client, "мука 2 т до 25 ноября")
+    assert r["missing"] == ["city"] and r["question"] == "Куда доставить: в Самарканд, как обычно, или в другой город?"
+    r = _need(client, "мука 2 т до 25 ноября", "как обычно", asked=["city"])
+    assert r["missing"] == [] and r["spec"]["city"] == "Самарканд" and r["spec"]["city_from_profile"] is True
+    r = _need(client, "мука 2 т до 25 ноября", "в Бухару", asked=["city"])
+    assert r["spec"]["city"] == "Бухара" and r["spec"]["city_from_profile"] is False
