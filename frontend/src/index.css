@@ -356,3 +356,6 @@ body.has-bar .shell { padding-bottom:120px; }
 .scr-wrap > .scr { animation:rise 220ms var(--ease-out) both; }
 /* узкий экран: длинная подпись в нижней панели переносится, а не вылезает за край */
 @media (max-width:560px) { .actbar .btn { white-space:normal; line-height:1.15; text-align:center; } .actbar .ok { height:48px; } }
+/* ответ агенту: поле ввода в нижней панели, как composer макета */
+.actbar .composer.reply { flex:1 1 auto; min-width:0; background:var(--surface-raised); min-height:56px; }
+.actbar .composer.reply textarea { white-space:normal; }

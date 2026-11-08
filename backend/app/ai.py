@@ -34,7 +34,10 @@ SYSTEM_NEED = (
     "Ты разбираешь заявку малого бизнеса на закупку, написанную своими словами по-русски или по-узбекски. "
     "Заполняй только то, что прямо сказано в тексте; остальное оставь null. "
     "product: flour — любая мука (un). grade: top — высший сорт (в/с, oliy nav). "
-    "qty_t — объем в тоннах (2000 кг = 2). due_day и due_month — срок «до какого числа»."
+    "qty_t — объем в тоннах (2000 кг = 2). due_day и due_month — срок «до какого числа»; "
+    "относительный срок («через неделю», «к пятнице») переведи в число и месяц от сегодняшней даты. "
+    "due_flexible — true, только если покупатель прямо сказал, что срок не важен. "
+    "Сообщений может быть несколько: это ответы на уточняющие вопросы, более позднее важнее."
 )
 
 NEED_SCHEMA = {
@@ -46,8 +49,9 @@ NEED_SCHEMA = {
         "city": {"anyOf": [{"type": "string", "enum": ["samarkand", "tashkent"]}, {"type": "null"}]},
         "due_day": {"type": ["integer", "null"]},
         "due_month": {"type": ["integer", "null"]},
+        "due_flexible": {"type": "boolean"},
     },
-    "required": ["product", "grade", "qty_t", "city", "due_day", "due_month"],
+    "required": ["product", "grade", "qty_t", "city", "due_day", "due_month", "due_flexible"],
     "additionalProperties": False,
 }
 
@@ -218,9 +222,10 @@ def check_text(text: str, payload: dict) -> str | None:
     return None
 
 
-def parse_need(text: str) -> dict | None:
-    """Текст заявки -> поля по NEED_SCHEMA. None — Claude недоступен, берем разбор кодом."""
-    raw, _ = _cached({"need": text}, lambda: _call(SYSTEM_NEED, text, NEED_SCHEMA))
+def parse_need(messages: list[str], today: str) -> dict | None:
+    """Сообщения покупателя -> поля по NEED_SCHEMA. None — Claude недоступен, берем разбор кодом."""
+    user = f"Сегодня {today}.\nСообщения покупателя по порядку:\n" + "\n".join(f"{i + 1}. {m}" for i, m in enumerate(messages))
+    raw, _ = _cached({"need": messages, "today": today}, lambda: _call(SYSTEM_NEED, user, NEED_SCHEMA))
     if not raw:
         return None
     try:

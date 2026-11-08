@@ -9,8 +9,9 @@ os.environ["AI_CACHE_PATH"] = str(_tmp / "ai_cache.db")
 os.environ["AI_DISABLED"] = "1"
 
 import pytest
-from app.main import app
 from fastapi.testclient import TestClient
+
+from app.main import app
 
 
 @pytest.fixture()
