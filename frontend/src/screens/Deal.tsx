@@ -87,10 +87,10 @@ export function Deal({
 
   const steps: { title: string; text: string; act?: ReactNode }[] = [
     { title: 'Задаток заморожен', text: `${fmt(deal.deposit_uzs)} сум хранятся у биржи` },
-    { title: 'Оплата на защищённый счёт', text: `${fmt(deal.total_uzs)} сум. Продавец получит их, только когда вы заберёте муку.` },
+    { title: 'Оплата на защищённый счёт', text: `${fmt(deal.total_uzs)} сум. Продавец получит их, только когда вы заберёте товар.` },
     {
       title: 'Доставка на склад',
-      text: `Вагон едет на склад. Davra разделит муку на всех (${deal.recipients} ${plural(deal.recipients, 'получатель', 'получателя', 'получателей')}) и скажет, когда забрать.`,
+      text: `Вагон едет на склад. Davra разделит партию на всех (${deal.recipients} ${plural(deal.recipients, 'получатель', 'получателя', 'получателей')}) и скажет, когда забрать.`,
     },
     { title: 'Получение', text: receiptText },
     { title: 'Готово', text: settleText },

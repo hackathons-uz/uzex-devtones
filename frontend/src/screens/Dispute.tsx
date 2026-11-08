@@ -88,7 +88,7 @@ export function Dispute({
             </li>
             <li>
               <span className="muted">·</span>
-              <span>Ваши фото мешков</span>
+              <span>Ваши фото при приёмке</span>
               <b>{e.photos} фото</b>
             </li>
             <li>

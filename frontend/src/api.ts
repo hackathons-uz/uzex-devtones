@@ -51,7 +51,7 @@ export type NeedResult = {
   }
   missing: NeedField[]
   question: string | null
-  pool: { id: string; members: number; lot_t: number; lot_unit: string; joined: boolean } | null
+  pool: { id: string; members: number; lot_t: number; lot_unit: string; lot_unit_ins: string; who: string; joined: boolean } | null
   pool_late: { delivery_text: string } | null
   source: Source
 }

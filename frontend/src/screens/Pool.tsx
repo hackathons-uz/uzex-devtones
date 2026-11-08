@@ -3,6 +3,8 @@ import { api, type Pool as PoolT } from '../api'
 import { fmt, fmtDec, pct, plural, pp, sleep } from '../format'
 import { ActionBar, Arrow, Check, Dr, ErrorNote, Ring, Roll } from '../components/ui'
 
+// «В магазинах Самарканда»: город в родительном падеже.
+const CITY_GEN: Record<string, string> = { Самарканд: 'Самарканда', Ташкент: 'Ташкента', Бухара: 'Бухары', Фергана: 'Ферганы', Андижан: 'Андижана', Наманган: 'Намангана', Навои: 'Навои', Карши: 'Карши', Нукус: 'Нукуса' }
 // «за октябрь» -> «в октябре»: подпись в чеке цены, как в макете.
 const MONTH_IN: Record<string, string> = { январь: 'январе', февраль: 'феврале', март: 'марте', апрель: 'апреле', май: 'мае', июнь: 'июне', июль: 'июле', август: 'августе', сентябрь: 'сентябре', октябрь: 'октябре', ноябрь: 'ноябре', декабрь: 'декабре' }
 
@@ -196,7 +198,7 @@ export function Pool({
                 </div>
               </dl>
               <p className="small muted">
-                В магазинах {pool.city === 'Самарканд' ? 'Самарканда' : pool.city} — {fmt(p.retail_uzs)} сум/кг. Точную цену покажут торги.
+                В магазинах {CITY_GEN[pool.city] ?? pool.city} — {fmt(p.retail_uzs)} сум/кг. Точную цену покажут торги.
               </p>
             </div>
           </details>

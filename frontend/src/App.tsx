@@ -449,7 +449,6 @@ export function App() {
             {!threads.length && <p className="side-empty">Здесь будут ваши заявки. Каждая хранит переписку с ИИ и показывает, на каком она этапе.</p>}
           </div>
           <div className="tools side-tools">
-            {themeBtn}
             <div className="lang" role="group" aria-label="Язык интерфейса">
               {(['ru', 'uz'] as Lang[]).map((l) => (
                 <button key={l} type="button" lang={l} aria-pressed={lang === l} onClick={() => chooseLang(l)}>
@@ -457,6 +456,7 @@ export function App() {
                 </button>
               ))}
             </div>
+            {themeBtn}
           </div>
           <div className="biz">
             <span className="ava" aria-hidden="true">
