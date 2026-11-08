@@ -87,3 +87,11 @@ def test_dispute_decision():
 @pytest.mark.parametrize(("n", "word"), [(1, "сделка"), (2, "сделки"), (5, "сделок"), (11, "сделок"), (21, "сделка"), (14, "сделок")])
 def test_plural(n, word):
     assert F.plural(n, "сделка", "сделки", "сделок") == word
+
+
+def test_forecast():
+    rows = [{"date": d, "qty_t": 2} for d in ("2026-08-29", "2026-09-20", "2026-10-12", "2026-11-03")]
+    fc = F.forecast(rows)
+    assert (fc["interval_days"], fc["runout"], fc["days_left"], fc["qty_t"]) == (22, "2026-11-25", 8, 2)
+    assert F.forecast(rows[:2]) is None
+    assert F.budget([]) is None

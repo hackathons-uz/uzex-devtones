@@ -157,6 +157,54 @@ def me(conn=Depends(get_conn)):
     }
 
 
+# ---------- 0. Биржа предлагает сама ----------
+
+
+@app.get("/offer")
+def offer(conn=Depends(get_conn)):
+    """Предложение до запроса: по ритму закупок товар скоро закончится, и под него уже собирается пул.
+
+    Все считает код: прогноз по истории, поиск пула, цена. Нет истории или подходящего пула — null.
+    """
+    b = _business(conn)
+    purchases = json.loads(b["purchases"])
+    for product in dict.fromkeys(p["product"] for p in purchases):
+        mine = [p for p in purchases if p["product"] == product]
+        fc = F.forecast(mine)
+        if not fc or fc["days_left"] > C.OFFER_HORIZON_DAYS:
+            continue
+        last = max(mine, key=lambda p: p["date"])
+        runout = date.fromisoformat(fc["runout"])
+        row = conn.execute(
+            "SELECT * FROM pool WHERE product=? AND city=? AND status='collecting' AND delivery_date<=?",
+            (product, last["city"], fc["runout"]),
+        ).fetchone()
+        if not row or _you(conn, row["id"]):
+            continue
+        price = F.expected_price(row["avg_exchange_uzs"])["price_uzs"]
+        prod = need.PRODUCTS[product]
+        grade = prod["grades"].get(last["grade"] or "")
+        qty = _fmt_t(fc["qty_t"])
+        city = need.CITIES[last["city"]]
+        # Текст заявки, которую агент отправит в чат: дальше обычный разбор, как будто покупатель написал сам.
+        name = prod["name"].split()[-1].lower()
+        draft = f"{qty} т {'муки' if product == 'flour' else name}{' в/с' if grade else ''} в {city['name']} до {F.date_ru(runout)}"
+        return {
+            "product": row["title"],
+            "qty_t": qty,
+            "forecast": {**fc, "runout_text": F.date_ru(runout), "last_text": F.date_ru(date.fromisoformat(fc["last_date"]))},
+            "pool": {
+                "id": row["id"],
+                "members": sum(m["members"] for m in _members(conn, row["id"])),
+                "price_uzs": price,
+                "discount_pct": F.discount_pct(price, row["retail_uzs"]),
+                "delivery_text": F.date_ru(date.fromisoformat(row["delivery_date"])),
+            },
+            "draft": draft,
+        }
+    return None
+
+
 # ---------- 1. Заявка ----------
 
 
@@ -233,7 +281,7 @@ def parse_need(body: NeedIn, conn=Depends(get_conn)):
         "due": due_date.isoformat() if due_date and due_source != "past" else None,
         "due_text": F.date_ru(due_date) if due_date and due_source != "past" else None,
         "due_source": due_source,
-        "budget_uzs": F.budget(json.loads(b["past_prices"])),
+        "budget_uzs": F.budget([p["price_uzs"] for p in json.loads(b["purchases"]) if p["product"] == parsed["product"]]),
     }
     pool = None
     late = None

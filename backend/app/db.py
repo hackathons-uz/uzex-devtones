@@ -20,7 +20,7 @@ CREATE TABLE IF NOT EXISTS business (
   business_years INTEGER NOT NULL,
   stable_turnover INTEGER NOT NULL,
   late_payments TEXT NOT NULL,      -- JSON: даты ISO
-  past_prices TEXT NOT NULL         -- JSON: цены прошлых закупок муки, сум/кг
+  purchases TEXT NOT NULL           -- JSON: прошлые закупки [{date, product, grade, city, qty_t, price_uzs}]
 );
 CREATE TABLE IF NOT EXISTS pool (
   id TEXT PRIMARY KEY,

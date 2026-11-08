@@ -7,6 +7,12 @@ BUSINESS_ID = "non-uyi"
 POOL_ID = "flour-samarkand-2611"
 DEAL_ID = "P-2611-0417"
 
+# История закупок пекарни: 2 т муки в/с примерно раз в 22 дня. По ней агент сам предлагает следующую закупку.
+PURCHASES = [
+    {"date": d, "product": "flour", "grade": "top", "city": "samarkand", "qty_t": 2, "price_uzs": p}
+    for d, p in [("2026-08-29", 4350), ("2026-09-20", 4420), ("2026-10-12", 4380), ("2026-11-03", 4370)]
+]
+
 TABLES = ["log", "evidence", "deal", "seller", "pool_member", "pool", "business"]
 
 
@@ -25,7 +31,7 @@ def seed(conn: sqlite3.Connection) -> None:
             4,
             1,
             json.dumps(["2026-08-14"]),
-            json.dumps([4350, 4420, 4380, 4370]),
+            json.dumps(PURCHASES),
         ),
     )
     conn.execute(

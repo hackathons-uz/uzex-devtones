@@ -141,3 +141,23 @@ def test_need_correction_after_complete(client):
     assert r["missing"] == [] and r["spec"]["qty_t"] == 3 and r["spec"]["due_text"] == "25 ноября"
     r = _need(client, "2 т муки в/с в Самарканд до 25 ноября", "нет, давай 3 т", "срок до 30 ноября", asked=[None, None])
     assert (r["spec"]["qty_t"], r["spec"]["due_text"]) == (3, "30 ноября")
+
+
+def test_offer_from_history(client):
+    o = client.get("/offer").json()
+    assert o["draft"] == "2 т муки в/с в Самарканд до 25 ноября"
+    assert (o["forecast"]["days_left"], o["forecast"]["interval_days"], o["forecast"]["purchases"]) == (8, 22, 4)
+    assert (o["pool"]["id"], o["pool"]["members"], o["pool"]["price_uzs"], o["pool"]["discount_pct"]) == (POOL, 36, 4260, 18)
+    r = _need(client, o["draft"])
+    assert r["missing"] == [] and r["pool"]["id"] == POOL
+
+
+def test_no_offer_without_history_or_after_join(client):
+    from app import db
+
+    client.post(f"/pools/{POOL}/join", json={"qty_t": 2})
+    assert client.get("/offer").json() is None
+    client.post("/demo/reset")
+    with db.session() as conn:
+        conn.execute("UPDATE business SET purchases='[]'")
+    assert client.get("/offer").json() is None

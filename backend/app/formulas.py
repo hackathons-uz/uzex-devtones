@@ -1,7 +1,8 @@
 """Открытые формулы: рейтинг, задаток, цена, торги, спор. Чистые функции без базы и без ИИ."""
 
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, timedelta
+from itertools import pairwise
 
 from . import config as C
 
@@ -156,10 +157,35 @@ def discount_pct(price: int, base: int) -> int:
     return round((1 - price / base) * 100)
 
 
-def budget(past_prices: list[int]) -> int:
+def budget(past_prices: list[int]) -> int | None:
+    """Средняя цена прошлых закупок + запас, вверх до 100 сум. Без истории бюджета нет."""
+    if not past_prices:
+        return None
     avg = sum(past_prices) / len(past_prices)
     step = C.BUDGET_ROUND_UZS
     return int(-(-avg * (1 + C.BUDGET_MARGIN_PCT / 100) // step) * step)
+
+
+def forecast(purchases: list[dict], today: date = C.DEMO_TODAY) -> dict | None:
+    """Когда закончится товар: последняя закупка + средний интервал между закупками.
+
+    purchases — закупки одного товара. Меньше OFFER_MIN_PURCHASES — ритма нет, прогноза нет.
+    """
+    if len(purchases) < C.OFFER_MIN_PURCHASES:
+        return None
+    dates = sorted(date.fromisoformat(p["date"]) for p in purchases)
+    gaps = [(b - a).days for a, b in pairwise(dates)]
+    interval = round(sum(gaps) / len(gaps))
+    runout = dates[-1] + timedelta(days=interval)
+    qtys = sorted(p["qty_t"] for p in purchases)
+    return {
+        "purchases": len(purchases),
+        "interval_days": interval,
+        "last_date": dates[-1].isoformat(),
+        "runout": runout.isoformat(),
+        "days_left": max(0, (runout - today).days),
+        "qty_t": qtys[len(qtys) // 2],
+    }
 
 
 # ---------- Торги ----------
