@@ -13,7 +13,7 @@ def test_need_full_request(client):
     assert r["source"] == "template" and r["missing"] == [] and r["question"] is None
     assert r["spec"]["product"] == "Мука пшеничная, высший сорт, ГОСТ 26574"
     assert (r["spec"]["qty_t"], r["spec"]["due_text"], r["spec"]["due_source"]) == (2, "25 ноября", "given")
-    assert r["spec"]["hub"] == "Самарканд, хаб «Север»" and r["spec"]["budget_uzs"] == 4600
+    assert r["spec"]["hub"] == "Самарканд, склад «Север»" and r["spec"]["budget_uzs"] == 4600
     assert r["pool"] == {"id": POOL, "members": 36, "lot_t": 60, "lot_unit": "вагон", "joined": False}
 
 

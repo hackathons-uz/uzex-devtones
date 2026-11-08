@@ -474,6 +474,8 @@ def get_auction(pool_id: str, conn=Depends(get_conn)):
         db.log(conn, "auction_closed", {"pool": pool_id, "price": r["final_price"], "winner": r["winner"]["id"]})
     for s in r["sellers"]:
         s["short"] = by_id[s["id"]]["short"]
+        s["about"] = by_id[s["id"]]["about"]
+    r["winner"]["about"] = by_id[r["winner"]["id"]]["about"]
     return {
         **r,
         "below_retail_pct": retail_pct,

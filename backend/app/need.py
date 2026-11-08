@@ -16,8 +16,8 @@ PRODUCTS = {
     },
 }
 CITIES = {
-    "samarkand": {"name": "Самарканд", "hub": "Самарканд, хаб «Север»", "keywords": [r"самарканд", r"samarqand", r"samarkand"]},
-    "tashkent": {"name": "Ташкент", "hub": "Ташкент, хаб «Сергели»", "keywords": [r"ташкент", r"toshkent", r"tashkent"]},
+    "samarkand": {"name": "Самарканд", "hub": "Самарканд, склад «Север»", "keywords": [r"самарканд", r"samarqand", r"samarkand"]},
+    "tashkent": {"name": "Ташкент", "hub": "Ташкент, склад «Сергели»", "keywords": [r"ташкент", r"toshkent", r"tashkent"]},
 }
 UZ_MONTHS = ["yanvar", "fevral", "mart", "aprel", "may", "iyun", "iyul", "avgust", "sentabr", "oktabr", "noyabr", "dekabr"]
 # Если срок не важен: запас по истории закупок покупателя.

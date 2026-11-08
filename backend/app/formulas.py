@@ -84,11 +84,11 @@ def rating_factors(h: History, today: date = C.DEMO_TODAY) -> list[dict]:
     tax = _tier(h.tax_clean_years, C.TAX_TIERS)
     if tax:
         y = h.tax_clean_years
-        out.append({"key": "tax", "label": f"Налоги без долгов {y} {plural(y, 'год', 'года', 'лет')}", "points": tax})
+        out.append({"key": "tax", "label": f"{y} {plural(y, 'год', 'года', 'лет')} без долгов по налогам", "points": tax})
     age = _tier(h.business_years, C.AGE_TIERS) if h.stable_turnover else 0
     if age:
         y = h.business_years
-        out.append({"key": "age", "label": f"Бизнесу {y} {plural(y, 'год', 'года', 'лет')}, обороты стабильны", "points": age})
+        out.append({"key": "age", "label": f"Бизнесу {y} {plural(y, 'год', 'года', 'лет')}", "points": age})
     late = sorted(d for d in h.late_payments if (today - d).days <= C.LATE_WINDOW_DAYS)
     if late:
         n = len(late)
@@ -97,7 +97,7 @@ def rating_factors(h: History, today: date = C.DEMO_TODAY) -> list[dict]:
         out.append(
             {
                 "key": "late",
-                "label": f"{word} {plural(n, 'задержка', 'задержки', 'задержек')} оплаты{when}",
+                "label": f"Задержка оплаты{when}" if n == 1 else f"{word} {plural(n, 'задержка', 'задержки', 'задержек')} оплаты{when}",
                 "points": C.LATE_PAYMENT_POINTS * n,
             }
         )

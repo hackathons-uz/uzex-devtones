@@ -47,7 +47,7 @@ def seed(conn: sqlite3.Connection) -> None:
             "вагон",
             "2026-11-20",
             "2026-11-22",
-            "Хаб «Самарканд-Север»",
+            "Склад «Самарканд-Север»",
             4390,
             "октябрь",
             5200,
@@ -66,15 +66,15 @@ def seed(conn: sqlite3.Connection) -> None:
             (POOL_ID, None, name, qty, "queued"),
         )
     sellers = [
-        ("zarafshon", "ООО «Zarafshon Don»", "Zarafshon Don", 4.9, 99, 1, [4520, 4450, 4380, 4320, 4280, 4260]),
-        ("toshkent", "АО «Toshkent Un»", "Toshkent Un", 4.7, 97, 0, [4550, 4480, 4400, 4340, 4300, 4290]),
-        ("buxoro", "ООО «Buxoro Grain»", "Buxoro Grain", 4.5, 95, 2, [4600, 4520, 4450, 4400, None, None]),
-        ("navoiy", "ЧП «Navoiy Tegirmon»", "Navoiy Tegirmon", 4.2, 92, 1, [4580, 4500, None, None, None, None]),
-        ("qarshi", "ООО «Qarshi Mill»", "Qarshi Mill", 3.7, 81, 4, [4300, 4200, 4150, 4100, 4050, 4000]),
+        ("zarafshon", "Мельница, Самарканд", "ООО «Zarafshon Don»", "Zarafshon Don", 4.9, 99, 1, [4520, 4450, 4380, 4320, 4280, 4260]),
+        ("toshkent", "Мелькомбинат, Ташкент", "АО «Toshkent Un»", "Toshkent Un", 4.7, 97, 0, [4550, 4480, 4400, 4340, 4300, 4290]),
+        ("buxoro", "Зерно и мука, Бухара", "ООО «Buxoro Grain»", "Buxoro Grain", 4.5, 95, 2, [4600, 4520, 4450, 4400, None, None]),
+        ("navoiy", "Мельница, Навои", "ЧП «Navoiy Tegirmon»", "Navoiy Tegirmon", 4.2, 92, 1, [4580, 4500, None, None, None, None]),
+        ("qarshi", "Мельница, Карши", "ООО «Qarshi Mill»", "Qarshi Mill", 3.7, 81, 4, [4300, 4200, 4150, 4100, 4050, 4000]),
     ]
-    for sid, name, short, rating, on_time, disputes, bids in sellers:
+    for sid, about, name, short, rating, on_time, disputes, bids in sellers:
         conn.execute(
-            "INSERT INTO seller VALUES (?,?,?,?,?,?,?,?,?)",
-            (sid, POOL_ID, name, short, rating, on_time, disputes, 0, json.dumps(bids)),
+            "INSERT INTO seller VALUES (?,?,?,?,?,?,?,?,?,?)",
+            (sid, POOL_ID, name, short, about, rating, on_time, disputes, 0, json.dumps(bids)),
         )
     conn.execute("INSERT INTO evidence VALUES (?,?,?,?,?,?)", (POOL_ID, 2000, 1940, 6, 1, 40))

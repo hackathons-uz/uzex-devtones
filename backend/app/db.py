@@ -55,6 +55,7 @@ CREATE TABLE IF NOT EXISTS seller (
   pool_id TEXT NOT NULL REFERENCES pool(id),
   name TEXT NOT NULL,
   short TEXT NOT NULL,
+  about TEXT NOT NULL,              -- кто это: «Мельница, Самарканд»
   rating REAL NOT NULL,
   on_time_pct INTEGER NOT NULL,
   disputes_12m INTEGER NOT NULL,
