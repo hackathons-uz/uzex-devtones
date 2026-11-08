@@ -13,7 +13,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
-from . import ai, db, need, seed
+from . import ai, db, need, seed, stt
 from . import config as C
 from . import formulas as F
 from .env import load_env
@@ -132,6 +132,7 @@ def health():
         "ai_disabled": os.environ.get("AI_DISABLED") == "1",
         "model": ai.model(),
         "last_ai_error": ai.last_error,
+        "stt_key_present": stt.key_present(),
         "cors_origins": _origins,
     }
 
@@ -157,6 +158,17 @@ def me(conn=Depends(get_conn)):
 
 
 # ---------- 1. Заявка ----------
+
+
+@app.post("/stt")
+async def speech_to_text(request: Request):
+    """Голос -> текст. Тело — сам звук (audio/webm, audio/mp4…), без multipart: так не нужен python-multipart."""
+    audio = await request.body()
+    try:
+        text = stt.transcribe(audio, request.headers.get("content-type", ""))
+    except stt.SttError as e:
+        raise ApiError(e.status, e.code, e.message) from None
+    return {"text": text}
 
 
 class NeedIn(BaseModel):

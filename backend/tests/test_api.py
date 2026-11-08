@@ -109,3 +109,28 @@ def test_dispute_escalate(client):
     r = client.post(f"/deals/{DEAL}/dispute/escalate").json()
     assert r["deal"]["status"] == "arbiter"
     assert client.post(f"/deals/{DEAL}/dispute/accept").status_code == 409
+
+
+def test_stt_without_key(client, monkeypatch):
+    monkeypatch.delenv("UZBEKVOICE_API_KEY", raising=False)
+    r = client.post("/stt", content=b"\x00\x01", headers={"Content-Type": "audio/webm"})
+    assert r.status_code == 503 and r.json()["error"] == "stt_unavailable"
+
+
+def test_stt_passes_text(client, monkeypatch):
+    import httpx
+
+    from app import stt
+
+    sent = {}
+
+    def fake_post(url, headers, files, data, timeout):
+        sent.update(url=url, auth=headers["Authorization"], file=files["file"], data=data)
+        return httpx.Response(200, json={"id": "1", "result": {"text": "2 тонны муки"}, "state": "SUCCESS"})
+
+    monkeypatch.setenv("UZBEKVOICE_API_KEY", "test-key")
+    monkeypatch.setattr(stt.httpx, "post", fake_post)
+    r = client.post("/stt", content=b"abc", headers={"Content-Type": "audio/webm;codecs=opus"})
+    assert r.json() == {"text": "2 тонны муки"}
+    assert sent["auth"] == "test-key" and sent["file"] == ("voice.webm", b"abc", "audio/webm")
+    assert sent["data"]["language"] == "uz-ru" and sent["data"]["blocking"] == "true"
