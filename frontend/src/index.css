@@ -547,7 +547,7 @@ body.has-bar .shell { padding-bottom:calc(16px + 60px + var(--space-6)); }
 /* продавец не допущен к торгам: одна строка под списком */
 .lots .excluded { font-size:13px; color:var(--ink-muted); }
 /* тема и язык внизу боковой панели, над карточкой бизнеса */
-.side .side-tools { margin-top:auto; padding:0 10px; justify-content:flex-start; gap:8px; }
+.side .side-tools { display:flex; flex-direction:row; align-items:center; margin-top:auto; padding:0 10px; justify-content:flex-start; gap:8px; }
 .side .side-tools + .biz { margin-top:0 !important; }
 /* микрофон в поле ввода: только на телефоне; на компьютере остается кнопка справа */
 .intro .composer .mic-in { display:none; }
