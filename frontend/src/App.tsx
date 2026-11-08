@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState, type MouseEvent as ReactMouseEvent } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { api, type Auction as AuctionT, type Deal as DealT, type Me, type Offer, type Pool as PoolT } from './api'
 import { Logo, LogoSymbols } from './components/Logo'
 import { Check, Cross, Dr } from './components/ui'
@@ -10,7 +10,7 @@ import { Dispute } from './screens/Dispute'
 import { Intro } from './screens/Intro'
 import { Need } from './screens/Need'
 import { Pool } from './screens/Pool'
-import { deleteThread, newThread, readOpenId, readThreads, saveThread, stageOf, todoOf, writeOpenId, type Step, type Thread } from './threads'
+import { deleteThread, newThread, readOpenId, readThreads, saveThread, stageOf, writeOpenId, type Step, type Thread } from './threads'
 
 const ORDER: Step[] = ['need', 'pool', 'auction', 'deal', 'reg']
 const RAIL: { id: Step; title: string }[] = [
@@ -59,7 +59,6 @@ export function App() {
   const [auction, setAuction] = useState<AuctionT | null>(null)
   const [deal, setDeal] = useState<DealT | null>(null)
   const [sideOpen, setSideOpen] = useState(false)
-  const [inboxAt, setInboxAt] = useState<{ top: number; left: number } | null>(null)
   const [theme, setTheme] = useState<Theme>(() => (readPref('davra-theme') as Theme | null) ?? systemTheme())
   const [lang, setLang] = useState<Lang>(() => (readPref('davra-lang') === 'uz' ? 'uz' : 'ru'))
   const [rating, setRating] = useState<DealT['rating_change']>(null)
@@ -154,7 +153,6 @@ export function App() {
     setAuction(null)
     setDeal(null)
     setSideOpen(false)
-    setInboxAt(null)
   }
 
   function openThread(t: Thread, at?: Step) {
@@ -208,7 +206,6 @@ export function App() {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== 'Escape') return
-      setInboxAt(null)
       if (sideOpen) {
         setSideOpen(false)
         menuBtn.current?.focus()
@@ -221,26 +218,6 @@ export function App() {
     if (sideOpen) setTimeout(() => sideRef.current?.querySelector<HTMLElement>('.draft .open, .new')?.focus(), 60)
   }, [sideOpen])
 
-  function toggleInbox(e: ReactMouseEvent<HTMLButtonElement>) {
-    e.stopPropagation()
-    if (inboxAt) return setInboxAt(null)
-    const r = e.currentTarget.getBoundingClientRect()
-    const w = Math.min(360, innerWidth - 16)
-    setInboxAt({ top: r.bottom + 8, left: Math.max(8, Math.min(r.left, innerWidth - w - 8)) })
-  }
-  useEffect(() => {
-    if (!inboxAt) return
-    const close = (e: MouseEvent) => {
-      if (!(e.target as Element).closest('#inbox')) setInboxAt(null)
-    }
-    const shut = () => setInboxAt(null)
-    document.addEventListener('click', close)
-    addEventListener('resize', shut)
-    return () => {
-      document.removeEventListener('click', close)
-      removeEventListener('resize', shut)
-    }
-  }, [inboxAt])
 
   // Подсказка к шкале рейтинга: наведение, фокус или касание.
   useEffect(() => {
@@ -406,31 +383,8 @@ export function App() {
       </section>
     )
 
-  const order = { warn: 0, act: 1, info: 2 }
-  const todos = threads
-    .map((t) => ({ t, todo: todoOf(t) }))
-    .filter((x) => x.todo)
-    .sort((a, b) => order[a.todo!.kind] - order[b.todo!.kind])
-  const needYou = todos.filter((x) => x.todo!.kind !== 'info').length
   const resume = threads.find((t) => stageOf(t).kind !== 'ok') ?? null
 
-  const bell = (
-    <button
-      className="bell"
-      type="button"
-      aria-haspopup="true"
-      aria-expanded={!!inboxAt}
-      aria-controls="inbox"
-      aria-label={needYou ? `Что нужно сделать, ${needYou}` : 'Что нужно сделать'}
-      onClick={toggleInbox}
-    >
-      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-        <path d="M6 8a6 6 0 1 1 12 0c0 7 3 9 3 9H3s3-2 3-9" />
-        <path d="M10.3 21a1.9 1.9 0 0 0 3.4 0" />
-      </svg>
-      {needYou > 0 && <span className="bell-n num">{needYou}</span>}
-    </button>
-  )
   const themeLabel = theme === 'dark' ? 'Светлая тема' : 'Тёмная тема'
   const themeBtn = (
     <button className="theme-btn" type="button" onClick={toggleTheme} aria-label={themeLabel} title={themeLabel}>
@@ -456,16 +410,6 @@ export function App() {
             <a className="home" href="#" aria-label="Davra, на главную" onClick={(e) => (e.preventDefault(), home())}>
               <Logo width={100} height={25} />
             </a>
-            <div className="tools">
-              {themeBtn}
-              <div className="lang" role="group" aria-label="Язык интерфейса">
-                {(['ru', 'uz'] as Lang[]).map((l) => (
-                  <button key={l} type="button" lang={l} aria-pressed={lang === l} onClick={() => chooseLang(l)}>
-                    {l.toUpperCase()}
-                  </button>
-                ))}
-              </div>
-            </div>
           </div>
           <button className="btn sm new" type="button" onClick={home}>
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" aria-hidden="true">
@@ -503,6 +447,16 @@ export function App() {
               })}
             </ul>
             {!threads.length && <p className="side-empty">Здесь будут ваши заявки. Каждая хранит переписку с ИИ и показывает, на каком она этапе.</p>}
+          </div>
+          <div className="tools side-tools">
+            {themeBtn}
+            <div className="lang" role="group" aria-label="Язык интерфейса">
+              {(['ru', 'uz'] as Lang[]).map((l) => (
+                <button key={l} type="button" lang={l} aria-pressed={lang === l} onClick={() => chooseLang(l)}>
+                  {l.toUpperCase()}
+                </button>
+              ))}
+            </div>
           </div>
           <div className="biz">
             <span className="ava" aria-hidden="true">
@@ -551,8 +505,6 @@ export function App() {
               <Logo width={96} height={24} />
             </a>
             <span style={{ flex: 1 }} />
-            {themeBtn}
-            {bell}
           </header>
           <div className="shell" lang={lang}>
             {!th ? (
@@ -578,33 +530,6 @@ export function App() {
       </div>
 
       <div className="tip" ref={tip} id="tip" role="tooltip" />
-      {inboxAt && (
-        <div className="inbox" id="inbox" role="dialog" aria-label="Что нужно сделать" style={{ top: inboxAt.top, left: inboxAt.left }}>
-          <div className="inbox-h">
-            <b>Что нужно сделать</b>
-            <span className="small muted">{needYou ? `Ждут вас: ${needYou}` : ''}</span>
-          </div>
-          <ul>
-            {todos.map(({ t, todo }) => (
-              <li key={t.id} className={todo!.kind}>
-                <button type="button" onClick={() => openThread(t, todo!.step)}>
-                  <span className="dot" aria-hidden="true" />
-                  <span className="tx">
-                    <b>{todo!.title}</b>
-                    <span>{todo!.text}</span>
-                    <i>{t.title}</i>
-                  </span>
-                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                    <path d="M9 6l6 6-6 6" />
-                  </svg>
-                </button>
-              </li>
-            ))}
-          </ul>
-          {!todos.length && <p className="inbox-empty small muted">Всё сделано. Когда по заявке понадобится ваше действие, оно появится здесь.</p>}
-        </div>
-      )}
-
       <dialog className="modal" ref={modal} aria-labelledby="rc-t" onClose={() => setRating(null)} onClick={(e) => e.target === modal.current && setRating(null)}>
         <span className="modal-ic" aria-hidden="true">
           <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">

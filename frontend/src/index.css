@@ -546,3 +546,14 @@ body.has-bar .shell { padding-bottom:calc(16px + 60px + var(--space-6)); }
 .side-top .tools { display:flex; align-items:center; gap:6px; }
 /* продавец не допущен к торгам: одна строка под списком */
 .lots .excluded { font-size:13px; color:var(--ink-muted); }
+/* тема и язык внизу боковой панели, над карточкой бизнеса */
+.side .side-tools { margin-top:auto; padding:0 10px; justify-content:space-between; }
+.side .side-tools + .biz { margin-top:0 !important; }
+/* микрофон в поле ввода: только на телефоне; на компьютере остается кнопка справа */
+.intro .composer .mic-in { display:none; }
+@media (max-width:560px) {
+  .mic.mic-solo { display:none; }
+  .intro .composer .mic-in { display:grid; flex:none; background:var(--surface); }
+  .intro .composer textarea { flex:1 1 calc(100% - 56px); flex-basis:calc(100% - 56px); }
+  .intro .composer .btn { flex:1 1 100%; }
+}

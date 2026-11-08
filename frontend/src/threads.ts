@@ -106,17 +106,3 @@ export function stageOf(t: Thread): Stage {
   if (t.filled) return { text: 'Пул собран', kind: 'act' }
   return { text: 'Заявка', kind: 'idle' }
 }
-
-export type Todo = { kind: 'warn' | 'act' | 'info'; title: string; text: string; step: Step }
-
-/** Что заявка ждет от покупателя дальше. null — ничего. */
-export function todoOf(t: Thread): Todo | null {
-  if (t.dealStatus === 'dispute') return { kind: 'warn', title: 'Ответьте по спору', text: 'Согласитесь с Davra или позовите арбитра', step: 'reg' }
-  if (t.dealStatus === 'arbiter') return { kind: 'info', title: 'Спор у арбитра', text: 'Ответ до 48 часов', step: 'reg' }
-  if (t.dealStatus === 'settled') return null
-  if (t.dealStage >= 3) return { kind: 'act', title: 'Подтвердите получение', text: 'Проверьте вес и качество на складе', step: 'deal' }
-  if (t.auctionDone) return { kind: 'act', title: 'Оплатите сделку', text: 'Деньги ждут на защищённом счёте', step: 'deal' }
-  if (t.filled) return { kind: 'info', title: 'Торги начнутся сами', text: 'Пул собран, делать ничего не нужно', step: 'auction' }
-  if (t.poolId && !t.joined) return { kind: 'act', title: 'Вступите в пул', text: 'Внесите задаток, пока идёт сбор', step: 'pool' }
-  return null
-}
