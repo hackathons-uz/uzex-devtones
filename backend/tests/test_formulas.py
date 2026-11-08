@@ -3,6 +3,7 @@
 from datetime import date
 
 import pytest
+
 from app import formulas as F
 
 H = F.History(clean_deals=14, tax_clean_years=3, business_years=4, stable_turnover=True, late_payments=[date(2026, 8, 14)])

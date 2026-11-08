@@ -4,21 +4,44 @@ POOL = "flour-samarkand-2611"
 DEAL = "P-2611-0417"
 
 
-def test_need_ru_and_uz(client):
-    r = client.post("/need", json={"text": "2 т муки в/с в Самарканд"}).json()
-    assert r["source"] == "template"
+def _need(client, *messages, asked=()):
+    return client.post("/need", json={"messages": list(messages), "asked": [None, *asked]}).json()
+
+
+def test_need_full_request(client):
+    r = _need(client, "2 т муки в/с в Самарканд до 25 ноября")
+    assert r["source"] == "template" and r["missing"] == [] and r["question"] is None
     assert r["spec"]["product"] == "Мука пшеничная, высший сорт, ГОСТ 26574"
-    assert r["spec"]["qty_t"] == 2
-    assert r["spec"]["hub"] == "Самарканд, хаб «Север»"
-    assert r["spec"]["due_text"] == "25 ноября"
-    assert r["spec"]["budget_uzs"] == 4600
+    assert (r["spec"]["qty_t"], r["spec"]["due_text"], r["spec"]["due_source"]) == (2, "25 ноября", "given")
+    assert r["spec"]["hub"] == "Самарканд, хаб «Север»" and r["spec"]["budget_uzs"] == 4600
     assert r["pool"] == {"id": POOL, "members": 36, "lot_t": 60, "lot_unit": "вагон", "joined": False}
-    uz = client.post("/need", json={"text": "25-noyabrgacha Samarqandga 2 tonna un"}).json()
-    assert uz["spec"]["qty_t"] == 2 and uz["spec"]["due_given"] and uz["pool"]["id"] == POOL
+
+
+def test_need_asks_missing_due_then_qty(client):
+    r = _need(client, "мука в Самарканд")
+    assert r["missing"] == ["qty_t", "due"] and r["question"].startswith("Сколько нужно") and r["pool"] is None
+    r = _need(client, "мука в Самарканд", "2", asked=["qty_t"])
+    assert r["missing"] == ["due"] and r["spec"]["qty_t"] == 2
+    r = _need(client, "мука в Самарканд", "2", "через неделю", asked=["qty_t", "due"])
+    assert r["missing"] == [] and r["spec"]["due_text"] == "24 ноября" and r["pool"]["id"] == POOL
+
+
+def test_need_flexible_due_and_uz(client):
+    r = _need(client, "Samarqandga 2 tonna un", "farqi yo'q", asked=["due"])
+    assert r["missing"] == [] and r["spec"]["due_source"] == "flexible" and r["pool"]["id"] == POOL
+    r = _need(client, "25-noyabrgacha Samarqandga 2 tonna un")
+    assert r["spec"]["due_source"] == "given" and r["pool"]["id"] == POOL
+
+
+def test_need_past_or_early_due(client):
+    r = _need(client, "2 т муки в Самарканд до 10 ноября")
+    assert r["missing"] == ["due"] and r["question"].startswith("Эта дата уже прошла")
+    r = _need(client, "2 т муки в Самарканд до 20 ноября")
+    assert r["pool"] is None and r["pool_late"] == {"delivery_text": "22 ноября"}
 
 
 def test_need_unknown_product(client):
-    r = client.post("/need", json={"text": "цемент 20 т"}).json()
+    r = _need(client, "цемент 20 т до 30 ноября")
     assert r["pool"] is None and r["missing"] == ["product"]
 
 
@@ -53,7 +76,7 @@ def test_join_twice_or_too_much(client):
     assert client.post(f"/pools/{POOL}/join", json={"qty_t": 11}).status_code == 409
     _to_deal(client)
     assert client.post(f"/pools/{POOL}/join", json={"qty_t": 2}).json()["error"] == "pool_closed"
-    again = client.post("/need", json={"text": "2 т муки в Самарканд"}).json()
+    again = _need(client, "2 т муки в Самарканд до 25 ноября")
     assert again["pool"]["joined"] is True
 
 

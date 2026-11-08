@@ -160,28 +160,53 @@ def me(conn=Depends(get_conn)):
 
 
 class NeedIn(BaseModel):
-    text: str = Field(min_length=1, max_length=500)
+    # Первое сообщение и ответы на уточняющие вопросы, по порядку.
+    messages: list[str] = Field(min_length=1, max_length=8)
+    # На какой вопрос отвечает каждое сообщение (у первого — None): «2» в ответ на вопрос об объеме — это 2 т.
+    asked: list[str | None] = Field(default_factory=list, max_length=8)
 
 
 @app.post("/need")
 def parse_need(body: NeedIn, conn=Depends(get_conn)):
-    """Текст своими словами -> заявка-потребность и подходящий пул. Поля проверяет код."""
-    by_code = need.parse(body.text)
-    by_ai = ai.parse_need(body.text)
+    """Сообщения покупателя -> заявка-потребность и подходящий пул.
+
+    Чего не хватает, решает код: товар, объем и срок. На первое недостающее поле агент задает вопрос.
+    """
+    msgs = [x.strip()[:500] for x in body.messages if x.strip()]
+    if not msgs:
+        raise ApiError(422, "empty", "Напишите, что нужно")
+    asked = (body.asked + [None] * len(body.messages))[: len(body.messages)]
+    pairs = [(x.strip()[:500], a) for x, a in zip(body.messages, asked, strict=True) if x.strip()]
+    by_code = need.parse_dialog([p[0] for p in pairs], [p[1] for p in pairs])
+    # Для Claude ответ идет вместе с вопросом, на который он отвечает.
+    lines = [f"(ответ на вопрос «{need.QUESTIONS[a]}») {x}" if a in need.QUESTIONS else x for x, a in pairs]
+    by_ai = ai.parse_need(lines, F.date_ru(C.DEMO_TODAY) + f" {C.DEMO_TODAY.year}")
     source = "template"
     parsed = by_code
     if by_ai is not None:
         source = "ai"
         due = (by_ai["due_day"], by_ai["due_month"]) if by_ai["due_day"] and by_ai["due_month"] else None
-        parsed = {"product": by_ai["product"], "grade": by_ai["grade"], "qty_t": by_ai["qty_t"], "city": by_ai["city"], "due": due}
+        parsed = {
+            "product": by_ai["product"],
+            "grade": by_ai["grade"],
+            "qty_t": by_ai["qty_t"],
+            "city": by_ai["city"],
+            "due": due,
+            "due_flexible": bool(by_ai["due_flexible"]),
+        }
     try:
-        due_date, due_given = need.resolve_due(parsed["due"])
+        due_date, due_source = need.resolve_due(parsed["due"], parsed["due_flexible"])
     except ValueError:
-        raise ApiError(422, "bad_date", "Не понял дату. Напишите, например: до 25 ноября.") from None
+        due_date, due_source = None, "past"
 
     b = _business(conn)
-    # Город не назван — берем из профиля бизнеса, поэтому его в missing нет.
+    # Город не назван — берем из профиля бизнеса и показываем это в заявке, без вопроса.
     missing = [k for k in ("product", "qty_t") if not parsed[k] or (k == "qty_t" and parsed[k] <= 0)]
+    if due_source in ("missing", "past"):
+        missing.append("due")
+    question = None
+    if missing:
+        question = need.QUESTIONS["past" if missing[0] == "due" and due_source == "past" else missing[0]]
     product = need.PRODUCTS.get(parsed["product"] or "")
     city = need.CITIES.get(parsed["city"] or "") or need.CITIES[b["city"]]
     city_key = parsed["city"] or b["city"]
@@ -193,19 +218,24 @@ def parse_need(body: NeedIn, conn=Depends(get_conn)):
         "city": city["name"],
         "city_from_profile": not parsed["city"],
         "hub": city["hub"],
-        "due": due_date.isoformat(),
-        "due_text": F.date_ru(due_date),
-        "due_given": due_given,
+        "due": due_date.isoformat() if due_date and due_source != "past" else None,
+        "due_text": F.date_ru(due_date) if due_date and due_source != "past" else None,
+        "due_source": due_source,
         "budget_uzs": F.budget(json.loads(b["past_prices"])),
     }
     pool = None
-    if parsed["product"] and parsed["qty_t"] and parsed["qty_t"] > 0:
+    late = None
+    if not missing:
         row = conn.execute(
             # Собранный пул тоже подходит, если вы уже в нем: заявку можно открыть заново.
             "SELECT * FROM pool WHERE product=? AND city=? AND (status='collecting' OR id IN "
             "(SELECT pool_id FROM pool_member WHERE business_id=?))",
             (parsed["product"], city_key, seed.BUSINESS_ID),
         ).fetchone()
+        if row and date.fromisoformat(row["delivery_date"]) > due_date and not _you(conn, row["id"]):
+            # Пул привезет позже, чем нужно покупателю: предлагать его нельзя.
+            late = {"delivery_text": F.date_ru(date.fromisoformat(row["delivery_date"]))}
+            row = None
         if row:
             members = sum(m["members"] for m in _members(conn, row["id"]))
             pool = {
@@ -215,8 +245,8 @@ def parse_need(body: NeedIn, conn=Depends(get_conn)):
                 "lot_unit": row["lot_unit"],
                 "joined": _you(conn, row["id"]) is not None,
             }
-    db.log(conn, "need", {"text": body.text, "source": source, "spec": spec, "pool": pool and pool["id"]})
-    return {"spec": spec, "missing": missing, "pool": pool, "source": source}
+    db.log(conn, "need", {"messages": msgs, "source": source, "spec": spec, "missing": missing, "pool": pool and pool["id"]})
+    return {"spec": spec, "missing": missing, "question": question, "pool": pool, "pool_late": late, "source": source}
 
 
 # ---------- 2. Пул и задаток ----------
