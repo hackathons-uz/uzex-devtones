@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { api, type NeedField, type NeedResult, type NeedTurn } from '../api'
+import { canRecord, startRecording, type Recording } from '../components/recorder'
 import { fmt, sleep } from '../format'
 import { Mark } from '../components/Logo'
 import { ActionBar, AiWho, Arrow, ErrorNote, Typing } from '../components/ui'
@@ -98,6 +99,41 @@ export function Need({
   const [answer, setAnswer] = useState('')
   const input = useRef<HTMLTextAreaElement>(null)
   const end = useRef<HTMLDivElement>(null)
+  // Голос в чате: первое нажатие — запись, второе — распознать в поле. Через 15 с запись останавливается сама.
+  const rec = useRef<Recording | null>(null)
+  const recTimer = useRef(0)
+  const [voice, setVoice] = useState<'idle' | 'rec' | 'parsing'>('idle')
+  const [voiceError, setVoiceError] = useState<string | null>(null)
+
+  async function stopVoice() {
+    const r = rec.current
+    if (!r) return
+    rec.current = null
+    clearTimeout(recTimer.current)
+    setVoice('parsing')
+    try {
+      const { text } = await api.stt(await r.stop())
+      setAnswer((a) => (a ? a + ' ' : '') + text)
+      input.current?.focus()
+    } catch (e) {
+      setVoiceError((e as Error).message)
+    } finally {
+      setVoice('idle')
+    }
+  }
+  async function toggleVoice() {
+    if (voice === 'rec') return stopVoice()
+    if (voice !== 'idle') return
+    setVoiceError(null)
+    try {
+      rec.current = await startRecording(() => {})
+      setVoice('rec')
+      recTimer.current = window.setTimeout(stopVoice, 15000)
+    } catch (e) {
+      setVoiceError((e as Error).name === 'NotAllowedError' ? 'Нет доступа к микрофону. Разрешите его в браузере или напишите текстом.' : 'Микрофон недоступен. Напишите текстом.')
+    }
+  }
+  useEffect(() => () => rec.current?.cancel(), [])
 
   useEffect(() => {
     if (reply) return
@@ -272,7 +308,7 @@ export function Need({
               aria-label="Сообщение для Davra"
               maxLength={2000}
               enterKeyHint="send"
-              placeholder={ask ? 'Ваш ответ' : 'Что поменять в заявке?'}
+              placeholder={voice === 'rec' ? 'Говорите… нажмите микрофон ещё раз, чтобы закончить' : voice === 'parsing' ? 'Распознаю…' : ask ? 'Ваш ответ' : 'Что поменять в заявке?'}
               value={answer}
               onChange={(e) => setAnswer(e.target.value)}
               onKeyDown={(e) => {
@@ -282,12 +318,21 @@ export function Need({
                 }
               }}
             />
+            {canRecord() && (
+              <button className={`mic${voice === 'rec' ? ' on' : ''}`} type="button" aria-label={voice === 'rec' ? 'Готово, распознать' : 'Сказать голосом'} onClick={toggleVoice} disabled={voice === 'parsing'}>
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true">
+                  <rect x="9" y="3" width="6" height="11" rx="3" />
+                  <path d="M5 11a7 7 0 0 0 14 0M12 18v3" />
+                </svg>
+              </button>
+            )}
             <button className="send-ic" type="button" aria-label="Отправить" onClick={sendAnswer} disabled={!answer.trim()}>
               <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
                 <path d="M12 19V5M5.5 11.5L12 5l6.5 6.5" />
               </svg>
             </button>
           </div>
+          {voiceError && <p className="small muted">{voiceError}</p>}
         </div>
       )}
       <div ref={end} />
