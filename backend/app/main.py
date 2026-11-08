@@ -1,37 +1,38 @@
-"""FastAPI: роуты по разделу «API» PRD v3. Расчеты — в чистых функциях, здесь только данные и журнал."""
+"""FastAPI: заявка, пул и задаток, торги, сделка, спор. Расчеты — в formulas.py, здесь данные и журнал."""
 
 import json
 import logging
-import math
 import os
 import sqlite3
 from collections.abc import Iterator
-from datetime import date, timedelta
+from datetime import date
 
 from fastapi import Depends, FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from pydantic import BaseModel, Field
 
-from . import ai, db
+from . import ai, db, need, seed
 from . import config as C
-from . import deposit as dep
-from . import pool as P
-from . import rating as R
-from . import rules as RU
+from . import formulas as F
 from .env import load_env
-from .models import RequestIn, RuleSave, RuleText
 
 logging.basicConfig(level=logging.INFO)
 
-# Ключ Claude из project/backend/.env. Клиент Claude создается при первом запросе, поэтому этого достаточно.
 _loaded = load_env()
 logging.getLogger("env").info(".env: загружено %s", ", ".join(_loaded) or "ничего (файла нет или все уже задано)")
 
-app = FastAPI(title="Биржа доверия — демо")
+app = FastAPI(title="Davra — биржа доверия")
+
+# Фронтенд на Vercel ходит на бэкенд на Render с другого домена: адреса — в CORS_ORIGINS через запятую.
+_origins = ["http://localhost:5173", "http://127.0.0.1:5173"] + [
+    o.strip().rstrip("/") for o in os.environ.get("CORS_ORIGINS", "").split(",") if o.strip()
+]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
+    allow_origins=_origins,
+    allow_origin_regex=os.environ.get("CORS_ORIGIN_REGEX") or None,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -61,15 +62,13 @@ _db_ready = False
 
 
 def _ensure_db() -> None:
-    """Схема и seed при первом запросе. На serverless событие startup не гарантировано."""
+    """Схема и seed при первом запросе. На бесплатном Render диск временный: после рестарта — снова seed."""
     global _db_ready
     if _db_ready:
         return
     with db.session() as conn:
-        db.init_schema(conn)
-        if not conn.execute("SELECT 1 FROM participants LIMIT 1").fetchone():
-            import seed
-
+        conn.executescript(db.SCHEMA)
+        if not conn.execute("SELECT 1 FROM business LIMIT 1").fetchone():
             seed.seed(conn)
     _db_ready = True
 
@@ -80,132 +79,48 @@ def get_conn() -> Iterator[sqlite3.Connection]:
         yield conn
 
 
-# ---------------- Загрузка данных ----------------
+# ---------- Чтение данных ----------
 
 
-def _deals(conn, pid: str) -> list[R.Deal]:
-    import seed
-
-    return seed.participant_deals(conn, pid)
+def _business(conn) -> sqlite3.Row:
+    return conn.execute("SELECT * FROM business WHERE id=?", (seed.BUSINESS_ID,)).fetchone()
 
 
-def participant(conn, pid: str) -> dict:
-    p = conn.execute("SELECT * FROM participants WHERE id=?", (pid,)).fetchone()
-    if not p:
-        raise ApiError(404, "participant_not_found", f"Участник «{pid}» не найден")
-    snap = conn.execute("SELECT * FROM rating_snapshots WHERE participant_id=?", (pid,)).fetchone()
-    comps = json.loads(snap["components"])
-    n = comps["n"]
-    return {
-        "id": p["id"],
-        "name": p["name"],
-        "role": p["role"],
-        "region": p["region"],
-        "parent_id": p["parent_id"],
-        "created_at": p["created_at"],
-        "note": p["note"],
-        "rating": snap["value"],
-        "components": comps,
-        "completed_deals": n,
-        "is_newbie": R.is_newbie(n),
-        "defaults_12m": comps["defaults_12m"],
-    }
-
-
-def lot(conn, lot_id: str) -> dict:
-    row = conn.execute("SELECT * FROM lots WHERE id=?", (lot_id,)).fetchone()
-    if not row:
-        raise ApiError(404, "lot_not_found", f"Лот «{lot_id}» не найден")
-    rule = json.loads(row["rules_json"])
-    seller = participant(conn, row["seller_id"])
-    return {
-        "id": row["id"],
-        "seller": {k: seller[k] for k in ("id", "name", "region", "rating", "completed_deals", "defaults_12m")},
-        "product": row["product"],
-        "grade": row["grade"],
-        "title": f"{row['product']} {row['grade']}",
-        "volume_t": row["volume_t"],
-        "price_per_t": row["price_per_t"],
-        "amount_uzs": row["volume_t"] * row["price_per_t"],
-        "region": row["region"],
-        "deadline": row["deadline"],
-        "pool_allowed": bool(row["pool_allowed"]),
-        "min_fill_pct": row["min_fill_pct"],
-        "rule": rule,
-        "rule_lines": RU.describe_rule(rule),
-        "rules_text": row["rules_text"],
-    }
-
-
-def pool_lot(lt: dict) -> P.Lot:
-    return P.Lot(
-        lt["id"],
-        lt["seller"]["id"],
-        lt["product"],
-        lt["grade"],
-        lt["volume_t"],
-        lt["price_per_t"],
-        lt["region"],
-        lt["deadline"],
-        lt["pool_allowed"],
-        lt["min_fill_pct"],
-        lt["rule"],
+def _history(b: sqlite3.Row) -> F.History:
+    return F.History(
+        clean_deals=b["clean_deals"],
+        tax_clean_years=b["tax_clean_years"],
+        business_years=b["business_years"],
+        stable_turnover=bool(b["stable_turnover"]),
+        late_payments=[date.fromisoformat(d) for d in json.loads(b["late_payments"])],
     )
 
 
-def distance_fn(conn) -> P.Distance:
-    table = {(r["region_a"], r["region_b"]): r["km"] for r in conn.execute("SELECT * FROM region_distance")}
-
-    def dist(a: str, b: str) -> int:
-        if a == b:
-            return C.SAME_REGION_KM
-        return table[(a, b)]
-
-    return dist
+def _pool_row(conn, pool_id: str) -> sqlite3.Row:
+    p = conn.execute("SELECT * FROM pool WHERE id=?", (pool_id,)).fetchone()
+    if not p:
+        raise ApiError(404, "not_found", f"Пул {pool_id} не найден")
+    return p
 
 
-OPEN_STATUSES = ("submitted", "admitted")
-LOCKED_STATUSES = ("deposit_locked", "confirmed", "escrow_paid", "delivered", "closed")
+def _members(conn, pool_id: str) -> list[sqlite3.Row]:
+    return conn.execute("SELECT * FROM pool_member WHERE pool_id=? AND status='joined' ORDER BY joined_seq", (pool_id,)).fetchall()
 
 
-def open_requests(conn, lt: dict, exclude: set[str] = frozenset()) -> list[P.OpenRequest]:
-    rows = conn.execute(
-        f"SELECT * FROM requests WHERE lot_id=? AND status IN ({','.join('?' * len(OPEN_STATUSES))}) ORDER BY id",
-        (lt["id"], *OPEN_STATUSES),
-    ).fetchall()
-    out = []
-    for r in rows:
-        if r["id"] in exclude:
-            continue
-        b = participant(conn, r["buyer_id"])
-        out.append(
-            P.OpenRequest(
-                r["id"], b["id"], b["name"], b["rating"], b["completed_deals"], lt["product"], lt["grade"], r["qty_t"], r["region"], r["deadline"]
-            )
-        )
-    return out
+def _sellers(conn, pool_id: str) -> list[dict]:
+    rows = conn.execute("SELECT * FROM seller WHERE pool_id=? ORDER BY rowid", (pool_id,)).fetchall()
+    return [{**dict(r), "bids": json.loads(r["bids"])} for r in rows]
 
 
-def guarantor_rating(conn, guarantor_id: str | None, buyer_id: str) -> int | None:
-    if not guarantor_id:
-        return None
-    if guarantor_id == buyer_id:
-        raise ApiError(422, "guarantor_invalid", "Нельзя поручиться за самого себя")
-    g = participant(conn, guarantor_id)
-    if g["rating"] < C.GUARANTOR_MIN_RATING:
-        raise ApiError(
-            422, "guarantor_invalid", f"Поручителем может быть участник с рейтингом от {C.GUARANTOR_MIN_RATING}, у «{g['name']}» {g['rating']}"
-        )
-    active = conn.execute(
-        "SELECT COUNT(*) c FROM guarantees WHERE guarantor_id=? AND status='active' AND beneficiary_id<>?",
-        (guarantor_id, buyer_id),
-    ).fetchone()["c"]
-    if active >= C.GUARANTOR_MAX_ACTIVE:
-        raise ApiError(422, "guarantor_limit", f"У «{g['name']}» уже {active} активных поручительств, это лимит")
-    return g["rating"]
+def _you(conn, pool_id: str) -> sqlite3.Row | None:
+    return conn.execute("SELECT * FROM pool_member WHERE pool_id=? AND business_id=?", (pool_id, seed.BUSINESS_ID)).fetchone()
 
 
-# ---------------- Участники и лоты ----------------
+def _fmt_t(v: float) -> float | int:
+    return int(v) if float(v).is_integer() else v
+
+
+# ---------- Служебное ----------
 
 
 @app.get("/health")
@@ -217,585 +132,421 @@ def health():
         "ai_disabled": os.environ.get("AI_DISABLED") == "1",
         "model": ai.model(),
         "last_ai_error": ai.last_error,
-        "on_vercel": bool(os.environ.get("VERCEL")),
-        "db_path": str(db.DB_PATH),
+        "cors_origins": _origins,
     }
-
-
-@app.get("/participants")
-def list_participants(conn=Depends(get_conn)):
-    rows = conn.execute("SELECT id FROM participants WHERE note IS NOT 'history' ORDER BY rowid").fetchall()
-    return [participant(conn, r["id"]) for r in rows]
-
-
-@app.get("/participants/{pid}")
-def get_participant(pid: str, conn=Depends(get_conn)):
-    p = participant(conn, pid)
-    nt = dep.next_tier(p["rating"])
-    created = date.fromisoformat(p["created_at"])
-    after = R.rating_after_next_success(_deals(conn, pid), created, p["components"]["start"])
-    p["deposit_pct"] = dep.tier_pct(p["rating"])
-    p["next_tier"] = {"rating": nt[0], "pct": nt[1], "points_left": nt[0] - p["rating"]} if nt else None
-    p["rating_after_next_deal"] = after
-    return p
-
-
-@app.get("/lots")
-def list_lots(buyer_id: str | None = None, qty_t: int = C.TRUCK_CAPACITY_T, conn=Depends(get_conn)):
-    lots = [lot(conn, r["id"]) for r in conn.execute("SELECT id FROM lots ORDER BY id")]
-    if buyer_id:
-        b = participant(conn, buyer_id)
-        dist = distance_fn(conn)
-        for lt in lots:
-            km = P.region_km(dist, lt["region"], b["region"])
-            trips = math.ceil(qty_t / C.TRUCK_CAPACITY_T)
-            per_t = round(trips * P.trip_cost(km) / qty_t)
-            lt["delivery_estimate"] = {
-                "to_region": b["region"],
-                "qty_t": qty_t,
-                "km": km,
-                "per_t_uzs": per_t,
-                "real_price_per_t": lt["price_per_t"] + per_t,
-                "is_estimate": True,
-            }
-    return lots
-
-
-@app.get("/lots/{lot_id}")
-def get_lot(lot_id: str, conn=Depends(get_conn)):
-    return lot(conn, lot_id)
-
-
-@app.get("/fund")
-def fund():
-    ex = C.FUND_EXAMPLE
-    return {
-        **ex,
-        "expected_loss_pct": ex["default_rate_pct"] / 100 * ex["max_loss_pct"],
-        "sustainable": dep.fund_is_sustainable(ex["default_rate_pct"], ex["max_loss_pct"], ex["fee_pct"]),
-        # Какую долю срывов выдерживает каждый тариф при убытке из примера: доля * убыток <= взнос.
-        "fee_tiers": [
-            {"min_rating": f, "pct": p, "max_default_rate_pct": round(p / ex["max_loss_pct"] * 100, 2)}
-            for f, p in C.INSURANCE_FEE_TIERS
-        ],
-        "min_rating": C.INSURANCE_MIN_RATING,
-        "max_amount_uzs": C.INSURANCE_MAX_AMOUNT_UZS,
-    }
-
-
-# ---------------- Заявка с залогом ----------------
-
-
-def evaluate(conn, body: RequestIn) -> dict:
-    """Допуск и залог для заявки. Только формулы."""
-    b = participant(conn, body.buyer_id)
-    lt = lot(conn, body.lot_id)
-    g_rating = guarantor_rating(conn, body.guarantor_id, b["id"])
-    amount = body.qty_t * lt["price_per_t"]
-    rule = lt["rule"]
-    admission = RU.admit(rule, b["rating"], b["completed_deals"], body.qty_t, lt["volume_t"], lt["pool_allowed"], g_rating)
-    insurance = body.payment_mode == "insurance"
-    if insurance and not dep.insurance_available(b["rating"], amount):
-        raise ApiError(
-            422,
-            "insurance_unavailable",
-            f"Страховка доступна при рейтинге от {C.INSURANCE_MIN_RATING} и сумме до {ai.money(C.INSURANCE_MAX_AMOUNT_UZS)}",
-        )
-    d = dep.compute(b["rating"], amount, g_rating, rule.get("min_prepay_pct") or 0, insurance)
-    nt = dep.next_tier(b["rating"], None if insurance else d["pct"])
-    after = R.rating_after_next_success(_deals(conn, b["id"]), date.fromisoformat(b["created_at"]), b["components"]["start"])
-    d_after = dep.compute(after, amount, g_rating, rule.get("min_prepay_pct") or 0)
-    fee = dep.insurance_fee_pct(b["rating"])
-    existing = conn.execute(
-        "SELECT id, qty_t, status FROM requests WHERE buyer_id=? AND lot_id=? AND status NOT IN ('withdrawn','rejected') ORDER BY id LIMIT 1",
-        (b["id"], lt["id"]),
-    ).fetchone()
-    return {
-        "existing_request": dict(existing) if existing else None,
-        "buyer": {k: b[k] for k in ("id", "name", "region", "rating", "completed_deals", "is_newbie")},
-        "lot": {k: lt[k] for k in ("id", "title", "price_per_t", "volume_t", "rule_lines", "rules_text", "pool_allowed")},
-        "seller": lt["seller"],
-        "qty_t": body.qty_t,
-        "amount_uzs": amount,
-        "guarantor_rating": g_rating,
-        "payment_mode": body.payment_mode,
-        "admission": admission,
-        "deposit": d,
-        "escrow_rest_uzs": amount - d["deposit_uzs"],
-        "next_tier": {"rating": nt[0], "pct": nt[1], "points_left": nt[0] - b["rating"]} if nt else None,
-        "after_next_deal": {"rating": after, "deposit_pct": d_after["pct"], "deposit_uzs": d_after["deposit_uzs"]},
-        "insurance_option": {
-            "available": dep.insurance_available(b["rating"], amount),
-            "fee_pct": fee,
-            "fee_uzs": round(amount * fee / 100) if fee else None,
-        },
-    }
-
-
-def with_explanation(result: dict) -> dict:
-    adm = result["admission"]
-    if adm["admitted"]:
-        kind, payload = (
-            "deposit",
-            {
-                "rating": result["buyer"]["rating"],
-                "amount_uzs": result["amount_uzs"],
-                "deposit": result["deposit"],
-                "next_tier": result["next_tier"],
-                "after_next_deal": result["after_next_deal"],
-            },
-        )
-    else:
-        kind, payload = (
-            "admission",
-            {
-                "rating": result["buyer"]["rating"],
-                "is_newbie": result["buyer"]["is_newbie"],
-                "qty_t": result["qty_t"],
-                "rule": result["lot"]["rule_lines"],
-                "admitted": False,
-                "reasons": adm["reasons"],
-                "options": adm["options"],
-            },
-        )
-    text, source = ai.explain(kind, payload)
-    result["explanation"] = {"kind": kind, "text": text, "source": source}
-    return result
-
-
-def _log_request_decisions(conn, entity_type: str, entity_id: str, body: RequestIn, r: dict) -> None:
-    exp = r["explanation"]
-    inp = body.model_dump()
-    db.log_decision(
-        conn, entity_type, entity_id, "admission", inp, r["admission"], exp["text"] if exp["kind"] == "admission" else None,
-        exp["source"] if exp["kind"] == "admission" else "formula",
-    )
-    db.log_decision(
-        conn, entity_type, entity_id, "deposit", inp, r["deposit"], exp["text"] if exp["kind"] == "deposit" else None,
-        exp["source"] if exp["kind"] == "deposit" else "formula",
-    )
-
-
-@app.post("/requests/preview")
-def preview(body: RequestIn, conn=Depends(get_conn)):
-    # Preview — примерка, а не решение: в журнал не пишем. Решение пишется при подаче заявки.
-    return with_explanation(evaluate(conn, body))
-
-
-@app.post("/requests")
-def submit(body: RequestIn, conn=Depends(get_conn)):
-    r = evaluate(conn, body)
-    if r["existing_request"]:
-        ex = r["existing_request"]
-        raise ApiError(409, "request_exists", f"Заявка на этот лот уже подана: {ex['qty_t']} т, номер {ex['id']}")
-    r = with_explanation(r)
-    n = conn.execute("SELECT COUNT(*) c FROM requests").fetchone()["c"] + 1
-    rid = f"req-{n}"
-    while conn.execute("SELECT 1 FROM requests WHERE id=?", (rid,)).fetchone():
-        n += 1
-        rid = f"req-{n}"
-    status = r["admission"]["status"]
-    conn.execute(
-        "INSERT INTO requests VALUES (?,?,?,?,?,?,?,?,?,?,?)",
-        (
-            rid,
-            body.buyer_id,
-            body.lot_id,
-            body.qty_t,
-            r["buyer"]["region"],
-            conn.execute("SELECT deadline FROM lots WHERE id=?", (body.lot_id,)).fetchone()["deadline"],
-            body.payment_mode,
-            body.guarantor_id,
-            r["lot"]["price_per_t"],
-            status,
-            db.now_iso(),
-        ),
-    )
-    if body.guarantor_id and status == "admitted":
-        conn.execute(
-            "INSERT INTO guarantees VALUES (?,?,?,?)", (f"g-{rid}", body.guarantor_id, body.buyer_id, "active")
-        )
-    _log_request_decisions(conn, "request", rid, body, r)
-    return {"id": rid, "status": status, **r}
-
-
-@app.post("/requests/{rid}/confirm")
-def confirm_request(rid: str, conn=Depends(get_conn)):
-    row = conn.execute("SELECT * FROM requests WHERE id=?", (rid,)).fetchone()
-    if not row:
-        raise ApiError(404, "request_not_found", f"Заявка «{rid}» не найдена")
-    if row["status"] != "admitted":
-        raise ApiError(409, "request_not_admitted", f"Заявку в статусе «{row['status']}» нельзя подтвердить")
-    conn.execute("UPDATE requests SET status='deposit_locked' WHERE id=?", (rid,))
-    return {"id": rid, "status": "deposit_locked"}
-
-
-# ---------------- Пул ----------------
-
-ACTIVE_POOL = ("proposed", "confirming", "locked")
-
-
-def pool_view(conn, pool_id: str, extra_excluded: list[dict] | None = None) -> dict:
-    p = conn.execute("SELECT * FROM pools WHERE id=?", (pool_id,)).fetchone()
-    if not p:
-        raise ApiError(404, "pool_not_found", f"Пул «{pool_id}» не найден")
-    lt = lot(conn, p["lot_id"])
-    rows = conn.execute(
-        "SELECT m.*, q.buyer_id, q.region, q.deadline FROM pool_members m JOIN requests q ON q.id=m.request_id "
-        "WHERE m.pool_id=? ORDER BY m.request_id",
-        (pool_id,),
-    ).fetchall()
-    members = []
-    for r in rows:
-        b = participant(conn, r["buyer_id"])
-        members.append(
-            P.OpenRequest(r["request_id"], b["id"], b["name"], b["rating"], b["completed_deals"], lt["product"], lt["grade"], r["share_t"], r["region"], r["deadline"])
-        )
-    dist = distance_fn(conn)
-    view = P.describe(pool_lot(lt), members, dist, math.ceil(lt["volume_t"] * lt["min_fill_pct"] / 100))
-    confirmed = {r["request_id"]: r["confirmed_at"] for r in rows}
-    for m in view["members"]:
-        m["confirmed"] = bool(confirmed[m["request_id"]])
-    # Исключенные фиксируются в момент подбора: после блокировки залогов набор открытых заявок
-    # меняется, и пересчет дал бы другой якорь и другие причины.
-    excluded = [e for e in _proposal_excluded(conn, pool_id) if e["code"] != "not_selected"] + (extra_excluded or [])
-    view.update(
-        {
-            "id": pool_id,
-            "status": p["status"],
-            "lot_title": lt["title"],
-            "seller": lt["seller"],
-            "seller_region": lt["region"],
-            "excluded": excluded,
-            "confirmed_count": sum(m["confirmed"] for m in view["members"]),
-        }
-    )
-    text, source = ai.explain("pool", _pool_payload(view))
-    view["explanation"] = {"text": text, "source": source}
-    return view
-
-
-def _proposal_excluded(conn, pool_id: str) -> list[dict]:
-    row = conn.execute(
-        "SELECT output_json FROM decisions_log WHERE entity_type='pool' AND entity_id=? AND kind='pool' "
-        "AND output_json LIKE '%\"excluded\"%' ORDER BY id LIMIT 1",
-        (pool_id,),
-    ).fetchone()
-    return json.loads(row["output_json"])["excluded"] if row else []
-
-
-def _log_proposal(conn, pool_id: str, lot_id: str, prop: dict, excluded: list[dict]) -> None:
-    db.log_decision(
-        conn,
-        "pool",
-        pool_id,
-        "pool",
-        {"lot_id": lot_id},
-        {"members": [m["request_id"] for m in prop["members"]], "total_t": prop["total_t"], "excluded": excluded},
-        None,
-        "formula",
-    )
-
-
-def _pool_payload(view: dict) -> dict:
-    return {
-        "members": [{k: m[k] for k in ("buyer_name", "region", "share_t", "deposit_uzs", "alone_uzs", "pool_share_uzs", "saving_uzs")} for m in view["members"]],
-        "total_t": view["total_t"],
-        "volume_t": view["volume_t"],
-        "pool_cost_uzs": view["pool_cost_uzs"],
-        "alone_cost_uzs": view["alone_cost_uzs"],
-        "route_km": view["route_km"],
-        "trips": view["trips"],
-        "excluded": [{"buyer_name": e["buyer_name"], "message": e["message"]} for e in view["excluded"]],
-    }
-
-
-def _create_pools(conn, lt: dict, proposals: list[dict], confirmed: dict[str, str] | None = None) -> list[str]:
-    ids = []
-    for prop in proposals:
-        n = conn.execute("SELECT COUNT(*) c FROM pools").fetchone()["c"] + 1
-        pid = f"pool-{n}"
-        keep = confirmed or {}
-        any_confirmed = any(m["request_id"] in keep for m in prop["members"])
-        conn.execute("INSERT INTO pools VALUES (?,?,?,?)", (pid, lt["id"], "confirming" if any_confirmed else "proposed", db.now_iso()))
-        for m in prop["members"]:
-            conn.execute(
-                "INSERT INTO pool_members VALUES (?,?,?,?,?)",
-                (pid, m["request_id"], m["share_t"], m["deposit_uzs"], keep.get(m["request_id"])),
-            )
-        ids.append(pid)
-    return ids
-
-
-@app.get("/lots/{lot_id}/pool-proposals")
-def pool_proposals(lot_id: str, conn=Depends(get_conn)):
-    lt = lot(conn, lot_id)
-    active = conn.execute(
-        f"SELECT id FROM pools WHERE lot_id=? AND status IN ({','.join('?' * len(ACTIVE_POOL))}) ORDER BY id",
-        (lot_id, *ACTIVE_POOL),
-    ).fetchall()
-    if not active:
-        res = P.propose_pools(pool_lot(lt), open_requests(conn, lt), distance_fn(conn))
-        if not res["proposals"]:
-            db.log_decision(conn, "lot", lot_id, "pool", {"lot_id": lot_id}, res, None, "formula")
-            return {"lot_id": lot_id, "pools": [], "reason": res["reason"], "excluded": res["excluded"], "details": res}
-        ids = _create_pools(conn, lt, res["proposals"])
-        for pid, prop in zip(ids, res["proposals"]):
-            _log_proposal(conn, pid, lot_id, prop, res["excluded"])
-    else:
-        ids = [r["id"] for r in active]
-    pools = [pool_view(conn, pid) for pid in ids]
-    for v in pools:
-        db.log_decision(conn, "pool", v["id"], "pool", {"lot_id": lot_id}, {"status": v["status"]}, v["explanation"]["text"], v["explanation"]["source"])
-    return {"lot_id": lot_id, "pools": pools, "reason": None}
-
-
-def _member_row(conn, pool_id: str, participant_id: str):
-    row = conn.execute(
-        "SELECT m.*, q.buyer_id FROM pool_members m JOIN requests q ON q.id=m.request_id WHERE m.pool_id=? AND q.buyer_id=?",
-        (pool_id, participant_id),
-    ).fetchone()
-    if not row:
-        raise ApiError(404, "member_not_found", f"Участника «{participant_id}» нет в пуле «{pool_id}»")
-    return row
-
-
-@app.post("/pools/{pool_id}/confirm")
-def pool_confirm(pool_id: str, participant_id: str, conn=Depends(get_conn)):
-    p = conn.execute("SELECT * FROM pools WHERE id=?", (pool_id,)).fetchone()
-    if not p:
-        raise ApiError(404, "pool_not_found", f"Пул «{pool_id}» не найден")
-    if p["status"] not in ("proposed", "confirming"):
-        raise ApiError(409, "pool_not_open", f"Пул в статусе «{p['status']}» уже не принимает подтверждения")
-    row = _member_row(conn, pool_id, participant_id)
-    if not row["confirmed_at"]:
-        conn.execute("UPDATE pool_members SET confirmed_at=? WHERE pool_id=? AND request_id=?", (db.now_iso(), pool_id, row["request_id"]))
-    left = conn.execute("SELECT COUNT(*) c FROM pool_members WHERE pool_id=? AND confirmed_at IS NULL", (pool_id,)).fetchone()["c"]
-    status = "locked" if left == 0 else "confirming"
-    conn.execute("UPDATE pools SET status=? WHERE id=?", (status, pool_id))
-    if status == "locked":
-        conn.execute(
-            "UPDATE requests SET status='deposit_locked' WHERE id IN (SELECT request_id FROM pool_members WHERE pool_id=?)", (pool_id,)
-        )
-        # Остальные предложения по этому лоту больше не нужны.
-        conn.execute("UPDATE pools SET status='failed' WHERE lot_id=? AND id<>? AND status IN ('proposed','confirming')", (p["lot_id"], pool_id))
-    db.log_decision(conn, "pool", pool_id, "pool", {"confirm": participant_id}, {"status": status, "left": left}, None, "formula")
-    return pool_view(conn, pool_id)
-
-
-@app.post("/pools/{pool_id}/withdraw")
-def pool_withdraw(pool_id: str, participant_id: str, conn=Depends(get_conn)):
-    p = conn.execute("SELECT * FROM pools WHERE id=?", (pool_id,)).fetchone()
-    if not p:
-        raise ApiError(404, "pool_not_found", f"Пул «{pool_id}» не найден")
-    if p["status"] not in ("proposed", "confirming"):
-        raise ApiError(409, "pool_not_open", f"Из пула в статусе «{p['status']}» выйти нельзя")
-    row = _member_row(conn, pool_id, participant_id)
-    confirmed = {
-        r["request_id"]: r["confirmed_at"]
-        for r in conn.execute("SELECT * FROM pool_members WHERE pool_id=? AND confirmed_at IS NOT NULL", (pool_id,))
-        if r["request_id"] != row["request_id"]
-    }
-    conn.execute("UPDATE requests SET status='withdrawn' WHERE id=?", (row["request_id"],))
-    conn.execute("UPDATE pools SET status='failed' WHERE id=?", (pool_id,))
-    lt = lot(conn, p["lot_id"])
-    res = P.propose_pools(pool_lot(lt), open_requests(conn, lt), distance_fn(conn))
-    db.log_decision(conn, "pool", pool_id, "pool", {"withdraw": participant_id}, {"status": "failed", "replanned": bool(res["proposals"])}, None, "formula")
-    if res["proposals"]:
-        new_id = _create_pools(conn, lt, res["proposals"][:1], confirmed)[0]
-        _log_proposal(conn, new_id, lt["id"], res["proposals"][0], res["excluded"])
-        view = pool_view(conn, new_id)
-        view["replaced_pool_id"] = pool_id
-        return view
-    view = pool_view(conn, pool_id)
-    view["replan"] = {
-        "reason": res["reason"],
-        "max_collected_t": res.get("max_collected_t"),
-        "min_fill_t": res.get("min_fill_t"),
-        "message": f"Замены нет: без выбывшего можно собрать только {res.get('max_collected_t', 0)} т, а нужно от {res.get('min_fill_t')} т",
-    }
-    return view
-
-
-# ---------------- Правила продавца и оценка риска ----------------
-
-
-@app.post("/lots/{lot_id}/rules/parse")
-def rules_parse(lot_id: str, body: RuleText, conn=Depends(get_conn)):
-    lot(conn, lot_id)
-    rule, unparsed, source = ai.parse_rule(body.text)
-    out = {
-        "text": body.text,
-        "rule": RU.normalize_rule(rule) if rule is not None else None,
-        "rule_lines": RU.describe_rule(rule) if rule is not None else [],
-        "unparsed": unparsed,
-        "source": source,
-        "manual": rule is None,
-    }
-    db.log_decision(conn, "lot", lot_id, "rule_parse", {"text": body.text}, out, None, source)
-    return out
-
-
-@app.post("/lots/{lot_id}/rules")
-def rules_save(lot_id: str, body: RuleSave, conn=Depends(get_conn)):
-    lot(conn, lot_id)
-    rule = RU.normalize_rule(body.rule.model_dump())
-    conn.execute("UPDATE lots SET rules_json=?, rules_text=? WHERE id=?", (db.dumps(rule), body.text, lot_id))
-    db.log_decision(conn, "lot", lot_id, "rule_parse", {"text": body.text, "confirmed": True}, rule, None, body.source)
-    return lot(conn, lot_id)
-
-
-def _seller_window_amounts(conn, seller_id: str, buyer_id: str) -> tuple[int, int]:
-    since = (C.DEMO_TODAY - timedelta(days=C.RISK_SHARE_WINDOW_DAYS)).isoformat()
-    seller_sold = conn.execute(
-        "SELECT COALESCE(SUM(amount_uzs),0) s FROM deal_history WHERE seller_id=? AND created_at>=?", (seller_id, since)
-    ).fetchone()["s"]
-    buyer_bought = conn.execute(
-        "SELECT COALESCE(SUM(amount_uzs),0) s FROM deal_history WHERE seller_id=? AND buyer_id=? AND created_at>=?",
-        (seller_id, buyer_id, since),
-    ).fetchone()["s"]
-    on_sale = conn.execute("SELECT COALESCE(SUM(volume_t*price_per_t),0) s FROM lots WHERE seller_id=?", (seller_id,)).fetchone()["s"]
-    return seller_sold + on_sale, buyer_bought
-
-
-@app.get("/lots/{lot_id}/requests")
-def seller_requests(lot_id: str, conn=Depends(get_conn)):
-    lt = lot(conn, lot_id)
-    edges = [(r["seller_id"], r["buyer_id"]) for r in conn.execute("SELECT seller_id, buyer_id FROM deal_history")]
-    rows = conn.execute("SELECT * FROM requests WHERE lot_id=? AND status<>'withdrawn' ORDER BY id", (lot_id,)).fetchall()
-    out = []
-    for q in rows:
-        b = participant(conn, q["buyer_id"])
-        g_rating = participant(conn, q["guarantor_id"])["rating"] if q["guarantor_id"] else None
-        amount = q["qty_t"] * lt["price_per_t"]
-        adm = RU.admit(lt["rule"], b["rating"], b["completed_deals"], q["qty_t"], lt["volume_t"], lt["pool_allowed"], g_rating)
-        if q["status"] in LOCKED_STATUSES:
-            # Правило действует с момента подтверждения: на заявки с заблокированным залогом оно не влияет.
-            adm = {
-                **adm,
-                "admitted": True,
-                "status": "admitted",
-                "locked": True,
-                "new_rule_would_reject": not adm["admitted"],
-                "reasons": [],
-                "options": [],
-            }
-        d = dep.compute(b["rating"], amount, g_rating, lt["rule"].get("min_prepay_pct") or 0)
-        seller_volume, bought = _seller_window_amounts(conn, lt["seller"]["id"], b["id"])
-        share = (bought + amount) / seller_volume * 100 if seller_volume else 0
-        chain = RU.find_chain(b["id"], edges)
-        chain_names = [participant(conn, x)["name"] for x in chain] if chain else None
-        rk = RU.risk(
-            buyer_deals=b["completed_deals"],
-            amount_uzs=amount,
-            bid_price_per_t=q["bid_price_per_t"],
-            lot_price_per_t=lt["price_per_t"],
-            buyer_share_pct=share,
-            chain=chain,
-            chain_names=chain_names,
-        )
-        if rk["signals"]:
-            text, source = ai.explain("risk", {"buyer": b["name"], **rk})
-        else:
-            text, source = ai.TEMPLATES["risk"](rk), "template"
-        rk["explanation"] = {"text": text, "source": source}
-        inp = {"request_id": q["id"], "rule": lt["rule"]}
-        db.log_decision(conn, "request", q["id"], "admission", inp, adm, None, "formula")
-        db.log_decision(conn, "request", q["id"], "risk", {"request_id": q["id"]}, {k: rk[k] for k in ("score", "level", "signals")}, text, source)
-        out.append(
-            {
-                "id": q["id"],
-                "buyer": {k: b[k] for k in ("id", "name", "region", "rating", "completed_deals", "is_newbie", "defaults_12m")},
-                "qty_t": q["qty_t"],
-                "amount_uzs": amount,
-                "bid_price_per_t": q["bid_price_per_t"],
-                "status": q["status"],
-                "admission": adm,
-                "deposit": {"pct": d["pct"], "deposit_uzs": d["deposit_uzs"]},
-                "risk": rk,
-            }
-        )
-    return {"lot": lt, "requests": out}
-
-
-# ---------------- Журнал и сброс ----------------
-
-
-@app.get("/decisions")
-def decisions(entity_type: str | None = None, entity_id: str | None = None, limit: int = 100, conn=Depends(get_conn)):
-    q, args = "SELECT * FROM decisions_log WHERE 1=1", []
-    if entity_type:
-        q += " AND entity_type=?"
-        args.append(entity_type)
-    if entity_id:
-        q += " AND entity_id=?"
-        args.append(entity_id)
-    q += " ORDER BY id DESC LIMIT ?"
-    args.append(min(limit, 500))
-    out = []
-    for r in conn.execute(q, args).fetchall():
-        inp, res = json.loads(r["input_json"]), json.loads(r["output_json"])
-        out.append(
-            {
-                **{k: r[k] for k in ("id", "entity_type", "entity_id", "kind", "explanation", "source", "created_at")},
-                "input": inp,
-                "output": res,
-                "title": _decision_title(conn, r["entity_type"], r["entity_id"]),
-                "summary": _decision_summary(r["kind"], inp, res),
-            }
-        )
-    return out
-
-
-def _decision_title(conn, entity_type: str, entity_id: str) -> str:
-    """Название объекта решения человеческими словами."""
-    if entity_type == "request":
-        q = conn.execute(
-            "SELECT p.name, q.qty_t, l.product FROM requests q JOIN participants p ON p.id=q.buyer_id "
-            "JOIN lots l ON l.id=q.lot_id WHERE q.id=?",
-            (entity_id,),
-        ).fetchone()
-        return f"Заявка {q['name']}: {q['product'].lower()}, {q['qty_t']} т" if q else "Заявка"
-    if entity_type == "pool":
-        p = conn.execute("SELECT l.product, l.grade FROM pools x JOIN lots l ON l.id=x.lot_id WHERE x.id=?", (entity_id,)).fetchone()
-        return f"Пул на {p['product'].lower()} {p['grade']}" if p else "Пул"
-    if entity_type == "lot":
-        lt = conn.execute("SELECT product, grade FROM lots WHERE id=?", (entity_id,)).fetchone()
-        return f"Лот {lt['product'].lower()} {lt['grade']}" if lt else "Лот"
-    return entity_type
-
-
-def _decision_summary(kind: str, inp: dict, res: dict) -> str:
-    """Короткий итог решения: что вошло и что вышло."""
-    if kind == "admission":
-        if res.get("locked"):
-            return "Допущен ранее, залог заблокирован: новое правило на заявку не влияет"
-        return "Допущен" if res.get("admitted") else "Отказ: " + "; ".join(x["message"] for x in res.get("reasons", []))
-    if kind == "deposit":
-        return f"Залог {res['pct']:g}% = {ai.money(res['deposit_uzs'])}" + (f", взнос {res['fee_pct']:g}%" if res.get("insurance") else "")
-    if kind == "risk":
-        level = {"low": "низкий", "medium": "средний", "high": "высокий"}[res["level"]]
-        return f"Риск {level}, {res['score']} баллов" + (": " + "; ".join(s["message"] for s in res["signals"]) if res["signals"] else "")
-    if kind == "pool":
-        if "members" in res:
-            return f"Подобран состав: {len(res['members'])} заявки, {res['total_t']} т; исключено {len(res.get('excluded', []))}"
-        if "confirm" in inp:
-            return f"Участник подтвердил, статус пула: {res['status']}" + (f", ждем еще {res['left']}" if res.get("left") else "")
-        if "withdraw" in inp:
-            return "Участник вышел, пул " + ("пересобран" if res.get("replanned") else "распался: замены нет")
-        if "status" in res:
-            return f"Показан пул, статус: {res['status']}"
-        return f"Пул не собран: {res.get('reason')}"
-    if kind == "rule_parse":
-        lines = RU.describe_rule(res.get("rule") or res) if (res.get("rule") or "min_rating" in res) else []
-        head = "Правило подтверждено продавцом" if inp.get("confirmed") else f"Разбор текста «{inp.get('text', '')}»"
-        return head + (": " + "; ".join(lines) if lines else ": поля для ручного ввода")
-    return ""
 
 
 @app.post("/demo/reset")
 def demo_reset(conn=Depends(get_conn)):
-    import seed
-
     seed.seed(conn)
     return {"ok": True}
+
+
+@app.get("/me")
+def me(conn=Depends(get_conn)):
+    b = _business(conn)
+    f = F.rating_factors(_history(b))
+    return {
+        "id": b["id"],
+        "name": b["name"],
+        "initials": b["initials"],
+        "city": need.CITIES[b["city"]]["name"],
+        "rating": F.rating(f),
+        "deposit_pct": F.deposit_pct(f),
+    }
+
+
+# ---------- 1. Заявка ----------
+
+
+class NeedIn(BaseModel):
+    text: str = Field(min_length=1, max_length=500)
+
+
+@app.post("/need")
+def parse_need(body: NeedIn, conn=Depends(get_conn)):
+    """Текст своими словами -> заявка-потребность и подходящий пул. Поля проверяет код."""
+    by_code = need.parse(body.text)
+    by_ai = ai.parse_need(body.text)
+    source = "template"
+    parsed = by_code
+    if by_ai is not None:
+        source = "ai"
+        due = (by_ai["due_day"], by_ai["due_month"]) if by_ai["due_day"] and by_ai["due_month"] else None
+        parsed = {"product": by_ai["product"], "grade": by_ai["grade"], "qty_t": by_ai["qty_t"], "city": by_ai["city"], "due": due}
+    try:
+        due_date, due_given = need.resolve_due(parsed["due"])
+    except ValueError:
+        raise ApiError(422, "bad_date", "Не понял дату. Напишите, например: до 25 ноября.") from None
+
+    b = _business(conn)
+    # Город не назван — берем из профиля бизнеса, поэтому его в missing нет.
+    missing = [k for k in ("product", "qty_t") if not parsed[k] or (k == "qty_t" and parsed[k] <= 0)]
+    product = need.PRODUCTS.get(parsed["product"] or "")
+    city = need.CITIES.get(parsed["city"] or "") or need.CITIES[b["city"]]
+    city_key = parsed["city"] or b["city"]
+    spec = {
+        "product": product["name"] + (", " + product["grades"][parsed["grade"]][0] if parsed["grade"] else "") + ", " + product["standard"]
+        if product
+        else None,
+        "qty_t": _fmt_t(parsed["qty_t"]) if parsed["qty_t"] else None,
+        "city": city["name"],
+        "city_from_profile": not parsed["city"],
+        "hub": city["hub"],
+        "due": due_date.isoformat(),
+        "due_text": F.date_ru(due_date),
+        "due_given": due_given,
+        "budget_uzs": F.budget(json.loads(b["past_prices"])),
+    }
+    pool = None
+    if parsed["product"] and parsed["qty_t"] and parsed["qty_t"] > 0:
+        row = conn.execute(
+            # Собранный пул тоже подходит, если вы уже в нем: заявку можно открыть заново.
+            "SELECT * FROM pool WHERE product=? AND city=? AND (status='collecting' OR id IN "
+            "(SELECT pool_id FROM pool_member WHERE business_id=?))",
+            (parsed["product"], city_key, seed.BUSINESS_ID),
+        ).fetchone()
+        if row:
+            members = sum(m["members"] for m in _members(conn, row["id"]))
+            pool = {
+                "id": row["id"],
+                "members": members,
+                "lot_t": row["lot_t"],
+                "lot_unit": row["lot_unit"],
+                "joined": _you(conn, row["id"]) is not None,
+            }
+    db.log(conn, "need", {"text": body.text, "source": source, "spec": spec, "pool": pool and pool["id"]})
+    return {"spec": spec, "missing": missing, "pool": pool, "source": source}
+
+
+# ---------- 2. Пул и задаток ----------
+
+
+def _pool_view(conn, pool_id: str, qty_t: float) -> dict:
+    p = _pool_row(conn, pool_id)
+    members = _members(conn, pool_id)
+    you = _you(conn, pool_id)
+    if you:
+        qty_t = you["qty_t"]
+    filled = sum(m["qty_t"] for m in members)
+    price = F.expected_price(p["avg_exchange_uzs"])
+    order_uzs = int(qty_t * 1000 * price["price_uzs"])
+    trust = F.trust(_history(_business(conn)), order_uzs)
+    sellers = _sellers(conn, pool_id)
+    deadline = date.fromisoformat(p["deadline"])
+    return {
+        "id": p["id"],
+        "title": p["title"],
+        "audience": p["audience"],
+        "city": need.CITIES[p["city"]]["name"],
+        "deadline": p["deadline"],
+        "deadline_text": F.date_ru(deadline),
+        "days_left": (deadline - C.DEMO_TODAY).days,
+        "lot_t": p["lot_t"],
+        "lot_unit": p["lot_unit"],
+        "status": p["status"],
+        "filled_t": _fmt_t(filled),
+        "left_t": _fmt_t(p["lot_t"] - filled),
+        "members": sum(m["members"] for m in members),
+        # Кольцо: доли в порядке вступления, одна точка — одна тонна.
+        "segments": [{"you": m["business_id"] == seed.BUSINESS_ID, "qty_t": _fmt_t(m["qty_t"])} for m in members],
+        "qty_t": _fmt_t(qty_t),
+        "price": {
+            "expected_uzs": price["price_uzs"],
+            "retail_uzs": p["retail_uzs"],
+            "discount_pct": F.discount_pct(price["price_uzs"], p["retail_uzs"]),
+            "order_uzs": order_uzs,
+            "retail_order_uzs": int(qty_t * 1000 * p["retail_uzs"]),
+            "avg_exchange_uzs": p["avg_exchange_uzs"],
+            "avg_month": p["avg_month"],
+            "volume_discount_pct": price["discount_range_pct"],
+            "sellers_confirmed": sum(1 for s in sellers if s["rating"] >= C.SELLER_MIN_RATING),
+        },
+        "trust": trust,
+        "you": {"joined": bool(you), "deposit_uzs": you["deposit_uzs"] if you else None},
+    }
+
+
+@app.get("/pools/{pool_id}")
+def get_pool(pool_id: str, qty_t: float = 2, conn=Depends(get_conn)):
+    if qty_t <= 0:
+        raise ApiError(422, "bad_qty", "Объем должен быть больше нуля")
+    return _pool_view(conn, pool_id, qty_t)
+
+
+class JoinIn(BaseModel):
+    qty_t: float = Field(gt=0)
+
+
+@app.post("/pools/{pool_id}/join")
+def join_pool(pool_id: str, body: JoinIn, conn=Depends(get_conn)):
+    """Покупатель вносит задаток и вступает. Затем подтверждаются заявки из очереди, пока есть место."""
+    p = _pool_row(conn, pool_id)
+    if p["status"] != "collecting":
+        raise ApiError(409, "pool_closed", "Сбор в этот пул уже закрыт")
+    if _you(conn, pool_id):
+        raise ApiError(409, "already_joined", "Вы уже в этом пуле")
+    view = _pool_view(conn, pool_id, body.qty_t)
+    if body.qty_t > view["left_t"]:
+        raise ApiError(409, "too_much", f"В пуле осталось {view['left_t']} т, а в заявке {_fmt_t(body.qty_t)} т")
+    seq = max(m["joined_seq"] for m in _members(conn, pool_id)) + 1
+    b = _business(conn)
+    deposit = view["trust"]["deposit_uzs"]
+    conn.execute(
+        "INSERT INTO pool_member (pool_id, business_id, name, qty_t, deposit_uzs, joined_seq, status) VALUES (?,?,?,?,?,?,?)",
+        (pool_id, b["id"], b["name"], body.qty_t, deposit, seq, "joined"),
+    )
+    db.log(conn, "join", {"pool": pool_id, "qty_t": body.qty_t, "deposit_uzs": deposit, "deposit_pct": view["trust"]["deposit_pct"]})
+    left = view["left_t"] - body.qty_t
+    events = []
+    for q in conn.execute("SELECT * FROM pool_member WHERE pool_id=? AND status='queued' ORDER BY id", (pool_id,)).fetchall():
+        if q["qty_t"] > left:
+            continue
+        seq += 1
+        left -= q["qty_t"]
+        conn.execute("UPDATE pool_member SET status='joined', joined_seq=? WHERE id=?", (seq, q["id"]))
+        events.append({"name": q["name"], "qty_t": _fmt_t(q["qty_t"])})
+    if left == 0:
+        conn.execute("UPDATE pool SET status='filled' WHERE id=?", (pool_id,))
+        db.log(conn, "pool_filled", {"pool": pool_id})
+    return {"pool": _pool_view(conn, pool_id, body.qty_t), "events": events}
+
+
+# ---------- 3. Торги ----------
+
+
+DROP_WORDS = {1: "Один вышел", 2: "Двое вышли", 3: "Трое вышли"}
+
+
+def _auction_points(r: dict, p: sqlite3.Row, retail_pct: int, avg_pct: int, qty_range: tuple) -> list[str]:
+    n = len(r["sellers"])
+    first = f"За {p['lot_unit']} боролись {n} {F.plural(n, 'продавец', 'продавца', 'продавцов')}."
+    d = r["dropped_count"]
+    if d:
+        first += f" {DROP_WORDS.get(d, f'{d} вышли')}, когда цена стала ниже их себестоимости."
+    w = r["winner"]
+    return [
+        first,
+        f"Победил «{w['short']}»: самая низкая цена и {w['on_time_pct']}% поставок без срывов.",
+        f"Это на {retail_pct}% ниже розницы и на {avg_pct}% ниже средней биржевой цены за {p['avg_month']}.",
+        f"Одна цена для всех: участник с {qty_range[0]} т платит за кг столько же, сколько с {qty_range[1]} т.",
+    ]
+
+
+@app.get("/pools/{pool_id}/auction")
+def get_auction(pool_id: str, conn=Depends(get_conn)):
+    """Торги по собранному пулу. Цену определяют ставки продавцов, объясняет ее ИИ."""
+    p = _pool_row(conn, pool_id)
+    if p["status"] != "filled":
+        raise ApiError(409, "pool_not_filled", "Торги начнутся, когда пул соберется")
+    you = _you(conn, pool_id)
+    sellers = _sellers(conn, pool_id)
+    r = F.auction(sellers)
+    by_id = {s["id"]: s for s in sellers}
+    r["winner"]["short"] = by_id[r["winner"]["id"]]["short"]
+    retail_pct = F.discount_pct(r["final_price"], p["retail_uzs"])
+    avg_pct = F.discount_pct(r["final_price"], p["avg_exchange_uzs"])
+    qtys = [m["qty_t"] for m in _members(conn, pool_id) if m["members"] == 1]
+    qty_range = (_fmt_t(min(qtys)), _fmt_t(max(qtys)))
+    fallback = _auction_points(r, p, retail_pct, avg_pct, qty_range)
+    payload = {
+        "sellers": [{"name": by_id[s["id"]]["short"], "on_time_pct": s["on_time_pct"]} for s in r["sellers"]],
+        "dropped_count": r["dropped_count"],
+        "winner": by_id[r["winner"]["id"]]["short"],
+        "winner_on_time_pct": r["winner"]["on_time_pct"],
+        "final_price_uzs_per_kg": r["final_price"],
+        "retail_uzs_per_kg": p["retail_uzs"],
+        "below_retail_pct": retail_pct,
+        "avg_exchange_uzs_per_kg": p["avg_exchange_uzs"],
+        "avg_month": p["avg_month"],
+        "below_avg_pct": avg_pct,
+        "member_qty_t_min": qty_range[0],
+        "member_qty_t_max": qty_range[1],
+    }
+    points, source = ai.explain_auction(payload, fallback)
+
+    deal = conn.execute("SELECT id FROM deal WHERE pool_id=? AND business_id=?", (pool_id, seed.BUSINESS_ID)).fetchone()
+    if you and not deal:
+        conn.execute(
+            "INSERT INTO deal (id, pool_id, business_id, seller_id, qty_kg, price_uzs, deposit_uzs, stage, status) VALUES (?,?,?,?,?,?,?,?,?)",
+            (
+                seed.DEAL_ID,
+                pool_id,
+                seed.BUSINESS_ID,
+                r["winner"]["id"],
+                int(you["qty_t"] * 1000),
+                r["final_price"],
+                you["deposit_uzs"],
+                1,
+                "active",
+            ),
+        )
+        db.log(conn, "auction_closed", {"pool": pool_id, "price": r["final_price"], "winner": r["winner"]["id"]})
+    for s in r["sellers"]:
+        s["short"] = by_id[s["id"]]["short"]
+    return {
+        **r,
+        "below_retail_pct": retail_pct,
+        "below_avg_pct": avg_pct,
+        "explain": {"points": points, "source": source},
+        "deal_id": seed.DEAL_ID if you else None,
+    }
+
+
+# ---------- 4. Сделка ----------
+
+
+def _deal_row(conn, deal_id: str) -> sqlite3.Row:
+    d = conn.execute("SELECT * FROM deal WHERE id=?", (deal_id,)).fetchone()
+    if not d:
+        raise ApiError(404, "not_found", f"Сделка {deal_id} не найдена. Сначала дождитесь итога торгов.")
+    return d
+
+
+def _deal_view(conn, deal_id: str) -> dict:
+    d = _deal_row(conn, deal_id)
+    p = _pool_row(conn, d["pool_id"])
+    s = conn.execute("SELECT * FROM seller WHERE id=?", (d["seller_id"],)).fetchone()
+    total = d["qty_kg"] * d["price_uzs"]
+    view = {
+        "id": d["id"],
+        "pool_id": d["pool_id"],
+        "product": f"{p['title']}, {_fmt_t(d['qty_kg'] / 1000)} т",
+        "qty_kg": d["qty_kg"],
+        "price_uzs": d["price_uzs"],
+        "total_uzs": total,
+        "deposit_uzs": d["deposit_uzs"],
+        "seller": {"name": s["name"], "rating": s["rating"]},
+        "hub": p["hub"],
+        "delivery_text": F.date_ru(date.fromisoformat(p["delivery_date"])),
+        "lot_t": p["lot_t"],
+        "recipients": sum(m["members"] for m in _members(conn, d["pool_id"])),
+        "stage": d["stage"],
+        "status": d["status"],
+        "refund_uzs": d["refund_uzs"],
+        "to_seller_uzs": total - d["refund_uzs"],
+        "rating_change": None,
+    }
+    if d["rating_after"] is not None:
+        f = F.rating_factors(_history(_business(conn)))
+        view["rating_change"] = {"before": d["rating_before"], "after": d["rating_after"], "next_deposit_pct": F.deposit_pct(f)}
+    return view
+
+
+def _require(d: sqlite3.Row, stage: int, statuses: tuple[str, ...], what: str) -> None:
+    if d["stage"] != stage or d["status"] not in statuses:
+        raise ApiError(409, "wrong_stage", f"Сейчас нельзя {what}: сделка на другом шаге")
+
+
+def _settle(conn, d: sqlite3.Row, refund: int) -> None:
+    """Расчет: деньги продавцу, задаток покупателю, плюс одна сделка без срыва в рейтинг покупателя."""
+    b = _business(conn)
+    before = F.rating(F.rating_factors(_history(b)))
+    conn.execute("UPDATE business SET clean_deals = clean_deals + 1 WHERE id=?", (b["id"],))
+    after = F.rating(F.rating_factors(_history(_business(conn))))
+    conn.execute(
+        "UPDATE deal SET stage=5, status='settled', refund_uzs=?, rating_before=?, rating_after=? WHERE id=?",
+        (refund, before, after, d["id"]),
+    )
+
+
+@app.get("/deals/{deal_id}")
+def get_deal(deal_id: str, conn=Depends(get_conn)):
+    return _deal_view(conn, deal_id)
+
+
+@app.post("/deals/{deal_id}/pay")
+def pay(deal_id: str, conn=Depends(get_conn)):
+    """Оплата в эскроу (банк — заглушка). Затем вагон идет на хаб и делится, шаг 3 проходит сам."""
+    d = _deal_row(conn, deal_id)
+    _require(d, 1, ("active",), "оплатить")
+    conn.execute("UPDATE deal SET stage=3 WHERE id=?", (deal_id,))
+    db.log(conn, "escrow_paid", {"deal": deal_id, "amount_uzs": d["qty_kg"] * d["price_uzs"]})
+    return _deal_view(conn, deal_id)
+
+
+@app.post("/deals/{deal_id}/confirm")
+def confirm(deal_id: str, conn=Depends(get_conn)):
+    d = _deal_row(conn, deal_id)
+    _require(d, 3, ("active",), "подтвердить получение")
+    _settle(conn, d, 0)
+    db.log(conn, "received", {"deal": deal_id})
+    return _deal_view(conn, deal_id)
+
+
+@app.post("/deals/{deal_id}/dispute")
+def open_dispute(deal_id: str, conn=Depends(get_conn)):
+    d = _deal_row(conn, deal_id)
+    _require(d, 3, ("active",), "открыть спор")
+    conn.execute("UPDATE deal SET status='dispute' WHERE id=?", (deal_id,))
+    db.log(conn, "dispute_opened", {"deal": deal_id})
+    return _deal_view(conn, deal_id)
+
+
+# ---------- 5. Спор ----------
+
+
+def _dispute(conn, d: sqlite3.Row) -> dict:
+    e = conn.execute("SELECT * FROM evidence WHERE pool_id=?", (d["pool_id"],)).fetchone()
+    s = conn.execute("SELECT * FROM seller WHERE id=?", (d["seller_id"],)).fetchone()
+    recipients = sum(m["members"] for m in _members(conn, d["pool_id"]))
+    decision = F.dispute_decision(
+        waybill_kg=e["waybill_kg"],
+        received_kg=e["received_kg"],
+        price_uzs=d["price_uzs"],
+        total_uzs=d["qty_kg"] * d["price_uzs"],
+        recipients=recipients,
+        confirmed_others=e["confirmed_others"],
+    )
+    return {
+        "deal_id": d["id"],
+        "status": d["status"],
+        "evidence": {
+            "waybill_kg": e["waybill_kg"],
+            "received_kg": e["received_kg"],
+            "photos": e["photos"],
+            "certificate_ok": bool(e["certificate_ok"]),
+        },
+        "checks": {
+            "recipients": recipients,
+            "confirmed_others": e["confirmed_others"],
+            "seller_short": s["short"],
+            "seller_linked": bool(s["linked_to_buyers"]),
+            "seller_disputes_12m": s["disputes_12m"],
+        },
+        "decision": decision,
+    }
+
+
+@app.get("/deals/{deal_id}/dispute")
+def get_dispute(deal_id: str, conn=Depends(get_conn)):
+    d = _deal_row(conn, deal_id)
+    if d["status"] not in ("dispute", "arbiter") and not d["refund_uzs"]:
+        raise ApiError(409, "no_dispute", "По этой сделке спор не открыт")
+    return _dispute(conn, d)
+
+
+@app.post("/deals/{deal_id}/dispute/accept")
+def accept_decision(deal_id: str, conn=Depends(get_conn)):
+    """Покупатель принимает предложенное решение. Без этого клика деньги из эскроу не двигаются."""
+    d = _deal_row(conn, deal_id)
+    _require(d, 3, ("dispute",), "принять решение")
+    dec = _dispute(conn, d)["decision"]
+    _settle(conn, d, dec["refund_uzs"])
+    db.log(conn, "dispute_accepted", {"deal": deal_id, **dec})
+    return {"deal": _deal_view(conn, deal_id), "dispute": _dispute(conn, _deal_row(conn, deal_id))}
+
+
+@app.post("/deals/{deal_id}/dispute/escalate")
+def escalate(deal_id: str, conn=Depends(get_conn)):
+    d = _deal_row(conn, deal_id)
+    _require(d, 3, ("dispute",), "передать арбитру")
+    conn.execute("UPDATE deal SET status='arbiter' WHERE id=?", (deal_id,))
+    db.log(conn, "dispute_escalated", {"deal": deal_id})
+    return {"deal": _deal_view(conn, deal_id), "dispute": _dispute(conn, _deal_row(conn, deal_id))}
+
+
+@app.get("/log")
+def get_log(conn=Depends(get_conn)):
+    rows = conn.execute("SELECT * FROM log ORDER BY id DESC LIMIT 100").fetchall()
+    return [{"at": r["at"], "kind": r["kind"], "payload": json.loads(r["payload"])} for r in rows]

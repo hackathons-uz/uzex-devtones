@@ -1,31 +1,22 @@
-// Только форматирование чисел для показа. Расчетов здесь нет.
+// Форматирование для показа. Ничего не считает: только пробелы между разрядами и запятые.
 
-export function sum(n: number): string {
-  return `${Math.round(n).toLocaleString('ru-RU')} сум`
+export const fmt = (n: number) => n.toLocaleString('ru-RU').replace(/[  ,]/g, ' ')
+
+export const fmtDec = (n: number) => String(n).replace('.', ',')
+
+export const pct = (n: number) => `${fmtDec(n)}%`
+
+/** −3,0% / +0,5%: знак всегда, одна цифра после запятой, как в макете. */
+export const pp = (n: number) => `${n > 0 ? '+' : '−'}${Math.abs(n).toFixed(1).replace('.', ',')}%`
+
+export function plural(n: number, one: string, few: string, many: string) {
+  const m = Math.abs(n) % 100
+  if (m >= 11 && m <= 14) return many
+  if (m % 10 === 1) return one
+  if (m % 10 >= 2 && m % 10 <= 4) return few
+  return many
 }
 
-export function mln(n: number): string {
-  if (Math.abs(n) < 1_000_000) return `${(Math.round(n / 1000)).toLocaleString('ru-RU')} тыс. сум`
-  return `${(Math.round(n / 10_000) / 100).toLocaleString('ru-RU')} млн сум`
-}
+export const reduceMotion = () => matchMedia('(prefers-reduced-motion: reduce)').matches
 
-export function pct(n: number): string {
-  return `${n.toLocaleString('ru-RU')}%`
-}
-
-export function t(n: number): string {
-  return `${n.toLocaleString('ru-RU')} т`
-}
-
-export function date(iso: string): string {
-  const [y, m, d] = iso.slice(0, 10).split('-').map(Number)
-  const months = ['января', 'февраля', 'марта', 'апреля', 'мая', 'июня', 'июля', 'августа', 'сентября', 'октября', 'ноября', 'декабря']
-  return `${d} ${months[m - 1]}${y !== 2026 ? ` ${y}` : ''}`
-}
-
-export function deals(n: number): string {
-  const m10 = n % 10
-  const m100 = n % 100
-  const word = m10 === 1 && m100 !== 11 ? 'сделка' : m10 >= 2 && m10 <= 4 && (m100 < 12 || m100 > 14) ? 'сделки' : 'сделок'
-  return `${n} ${word}`
-}
+export const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, reduceMotion() ? 0 : ms))

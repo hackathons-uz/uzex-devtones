@@ -1,4 +1,7 @@
 // Клиент API. Все цифры считает бэкенд; фронт их только показывает.
+// Локально запросы идут на /api (Vite проксирует на :8000), на Vercel — на адрес Render из VITE_API_URL.
+
+const BASE = (import.meta.env.VITE_API_URL as string | undefined)?.replace(/\/$/, '') || '/api'
 
 export class ApiError extends Error {
   code: string
@@ -11,11 +14,16 @@ export class ApiError extends Error {
 }
 
 async function call<T>(method: string, path: string, body?: unknown): Promise<T> {
-  const res = await fetch(`/api${path}`, {
-    method,
-    headers: body ? { 'Content-Type': 'application/json' } : undefined,
-    body: body ? JSON.stringify(body) : undefined,
-  })
+  let res: Response
+  try {
+    res = await fetch(`${BASE}${path}`, {
+      method,
+      headers: body ? { 'Content-Type': 'application/json' } : undefined,
+      body: body ? JSON.stringify(body) : undefined,
+    })
+  } catch {
+    throw new ApiError(0, 'network', 'Сервер не отвечает. Бесплатный сервер просыпается до минуты — попробуйте еще раз.')
+  }
   const data = await res.json().catch(() => null)
   if (!res.ok) {
     throw new ApiError(res.status, data?.error ?? 'http', data?.message ?? `Ошибка сервера: ${res.status}`)
@@ -23,224 +31,137 @@ async function call<T>(method: string, path: string, body?: unknown): Promise<T>
   return data as T
 }
 
-export type Source = 'ai' | 'template' | 'formula'
-export type Explanation = { text: string; source: Source; kind?: string }
+export type Source = 'ai' | 'template'
 
-export type Participant = {
-  id: string
-  name: string
-  role: string
-  region: string
-  rating: number
-  completed_deals: number
-  is_newbie: boolean
-  defaults_12m: number
-  note: string | null
-  components: {
-    S: number
-    P: number
-    D: number
-    T: number
-    V: number
-    n: number
-    raw: number
-    history_weight: number
-    start: number
-    penalties: number
+export type Me = { id: string; name: string; initials: string; city: string; rating: number; deposit_pct: number }
+
+export type NeedResult = {
+  spec: {
+    product: string | null
+    qty_t: number | null
+    city: string
+    city_from_profile: boolean
+    hub: string
+    due: string
+    due_text: string
+    due_given: boolean
+    budget_uzs: number
   }
-  deposit_pct?: number
-  next_tier?: NextTier | null
-  rating_after_next_deal?: number
+  missing: ('product' | 'qty_t')[]
+  pool: { id: string; members: number; lot_t: number; lot_unit: string; joined: boolean } | null
+  source: Source
 }
 
-export type Rule = {
-  min_rating: number | null
-  min_prepay_pct: number | null
-  newbie_max_volume_t: number | null
-  allow_pool: boolean | null
-  require_guarantor_below_rating: number | null
-}
+export type Factor = { key: string; label: string; points: number; deposit_pp: number }
 
-export type Lot = {
-  id: string
-  title: string
-  product: string
-  grade: string
-  volume_t: number
-  price_per_t: number
-  amount_uzs: number
-  region: string
-  deadline: string
-  pool_allowed: boolean
-  rule: Rule
-  rule_lines: string[]
-  rules_text: string | null
-  seller: { id: string; name: string; region: string; rating: number; completed_deals: number; defaults_12m: number }
-  delivery_estimate?: {
-    to_region: string
-    qty_t: number
-    km: number
-    per_t_uzs: number
-    real_price_per_t: number
-    is_estimate: boolean
-  }
-}
-
-export type Reason = { code: string; message: string }
-export type Option = { code: string; message: string; max_t?: number; points?: number }
-export type Admission = {
-  admitted: boolean
-  status: 'admitted' | 'rejected'
-  effective_rating: number
-  is_newbie: boolean
-  reasons: Reason[]
-  options: Option[]
-  locked?: boolean
-  new_rule_would_reject?: boolean
-}
-export type NextTier = { rating: number; pct: number; points_left: number }
-export type Deposit = { pct: number; deposit_uzs: number; insurance: boolean; fee_pct: number | null; fee_uzs: number }
-
-export type Preview = {
-  buyer: Pick<Participant, 'id' | 'name' | 'region' | 'rating' | 'completed_deals' | 'is_newbie'>
-  lot: Pick<Lot, 'id' | 'title' | 'price_per_t' | 'volume_t' | 'rule_lines' | 'rules_text' | 'pool_allowed'>
-  seller: Lot['seller']
-  qty_t: number
-  amount_uzs: number
-  guarantor_rating: number | null
-  payment_mode: 'deposit' | 'insurance'
-  admission: Admission
-  deposit: Deposit
-  escrow_rest_uzs: number
-  next_tier: NextTier | null
-  after_next_deal: { rating: number; deposit_pct: number; deposit_uzs: number }
-  insurance_option: { available: boolean; fee_pct: number | null; fee_uzs: number | null }
-  existing_request: { id: string; qty_t: number; status: string } | null
-  explanation: Explanation
-}
-
-export type RequestBody = {
-  buyer_id: string
-  lot_id: string
-  qty_t: number
-  guarantor_id?: string | null
-  payment_mode?: 'deposit' | 'insurance'
-}
-
-export type PoolMember = {
-  request_id: string
-  buyer_id: string
-  buyer_name: string
-  buyer_rating: number
-  region: string
-  share_t: number
-  goods_uzs: number
-  deposit_pct: number
-  deposit_uzs: number
-  alone_trips: number
-  alone_km: number
-  alone_uzs: number
-  pool_share_uzs: number
-  saving_uzs: number
-  confirmed: boolean
-}
-export type Excluded = { request_id: string; buyer_name: string; qty_t: number; region: string; code: string; message: string }
 export type Pool = {
   id: string
-  status: 'proposed' | 'confirming' | 'locked' | 'closed' | 'failed'
-  lot_id: string
-  lot_title: string
-  total_t: number
-  volume_t: number
-  fill_pct: number
-  min_fill_t: number
-  price_per_t: number
-  members: PoolMember[]
-  route: { request_id: string; buyer_name: string; region: string; km: number }[]
-  route_km: number
-  trips: number
-  pool_cost_uzs: number
-  alone_cost_uzs: number
-  saving_uzs: number
-  seller: Lot['seller']
-  seller_region: string
-  excluded: Excluded[]
-  confirmed_count: number
-  explanation: Explanation
-  replaced_pool_id?: string
-  replan?: { message: string; max_collected_t: number; min_fill_t: number }
+  title: string
+  audience: string
+  city: string
+  deadline_text: string
+  days_left: number
+  lot_t: number
+  lot_unit: string
+  status: 'collecting' | 'filled'
+  filled_t: number
+  left_t: number
+  members: number
+  segments: { you: boolean; qty_t: number }[]
+  qty_t: number
+  price: {
+    expected_uzs: number
+    retail_uzs: number
+    discount_pct: number
+    order_uzs: number
+    retail_order_uzs: number
+    avg_exchange_uzs: number
+    avg_month: string
+    volume_discount_pct: [number, number]
+    sellers_confirmed: number
+  }
+  trust: {
+    rating: number
+    deposit_pct: number
+    deposit_uzs: number
+    deposit_max_pct: number
+    deposit_min_pct: number
+    factors: Factor[]
+    hint: { deals: number | null; target_pct: number }
+  }
+  you: { joined: boolean; deposit_uzs: number | null }
 }
 
-export type Risk = {
-  score: number
-  level: 'low' | 'medium' | 'high'
-  signals: { code: string; points: number; message: string }[]
-  explanation: Explanation
+export type JoinResult = { pool: Pool; events: { name: string; qty_t: number }[] }
+
+export type Seller = { id: string; name: string; short: string; rating: number; on_time_pct: number }
+
+export type Auction = {
+  sellers: Seller[]
+  excluded: { id: string; name: string; rating: number }[]
+  rounds: { round: number; bids: { seller_id: string; price: number | null }[]; best_price: number; leader_id: string }[]
+  round_min: number
+  final_price: number
+  winner: Seller
+  dropped_count: number
+  below_retail_pct: number
+  below_avg_pct: number
+  explain: { points: string[]; source: Source }
+  deal_id: string | null
 }
-export type SellerRequest = {
+
+export type Deal = {
   id: string
-  buyer: Pick<Participant, 'id' | 'name' | 'region' | 'rating' | 'completed_deals' | 'is_newbie' | 'defaults_12m'>
-  qty_t: number
-  amount_uzs: number
-  bid_price_per_t: number
-  status: string
-  admission: Admission
-  deposit: { pct: number; deposit_uzs: number }
-  risk: Risk
+  pool_id: string
+  product: string
+  qty_kg: number
+  price_uzs: number
+  total_uzs: number
+  deposit_uzs: number
+  seller: { name: string; rating: number }
+  hub: string
+  delivery_text: string
+  lot_t: number
+  recipients: number
+  stage: number
+  status: 'active' | 'dispute' | 'arbiter' | 'settled'
+  refund_uzs: number
+  to_seller_uzs: number
+  rating_change: { before: number; after: number; next_deposit_pct: number } | null
 }
-export type ParsedRule = {
-  text: string
-  rule: Rule | null
-  rule_lines: string[]
-  unparsed: string[]
-  source: Source
-  manual: boolean
-}
-export type Decision = {
-  id: number
-  entity_type: string
-  entity_id: string
-  kind: string
-  explanation: string | null
-  source: Source
-  created_at: string
-  output: unknown
-  title: string
-  summary: string
-}
-export type Fund = {
-  fee_pct: number
-  default_rate_pct: number
-  max_loss_pct: number
-  expected_loss_pct: number
-  sustainable: boolean
-  fee_tiers: { min_rating: number; pct: number; max_default_rate_pct: number }[]
-  min_rating: number
-  max_amount_uzs: number
+
+export type Dispute = {
+  deal_id: string
+  status: Deal['status']
+  evidence: { waybill_kg: number; received_kg: number; photos: number; certificate_ok: boolean }
+  checks: {
+    recipients: number
+    confirmed_others: number
+    seller_short: string
+    seller_linked: boolean
+    seller_disputes_12m: number
+  }
+  decision: {
+    shortfall_kg: number
+    refund_uzs: number
+    to_seller_uzs: number
+    fault: 'hub' | 'seller'
+    seller_rating_changes: boolean
+  }
 }
 
 export const api = {
-  participant: (id: string) => call<Participant>('GET', `/participants/${id}`),
-  lots: (buyerId?: string, qtyT?: number) =>
-    call<Lot[]>('GET', `/lots${buyerId ? `?buyer_id=${buyerId}${qtyT ? `&qty_t=${qtyT}` : ''}` : ''}`),
-  lot: (id: string) => call<Lot>('GET', `/lots/${id}`),
-  preview: (b: RequestBody) => call<Preview>('POST', '/requests/preview', b),
-  submit: (b: RequestBody) => call<Preview & { id: string; status: string }>('POST', '/requests', b),
-  confirmRequest: (id: string) => call<{ id: string; status: string }>('POST', `/requests/${id}/confirm`),
-  poolProposals: (lotId: string) =>
-    call<{
-      pools: Pool[]
-      reason: string | null
-      excluded?: Excluded[]
-      details?: { max_collected_t?: number; min_fill_t?: number }
-    }>('GET', `/lots/${lotId}/pool-proposals`),
-  poolConfirm: (poolId: string, pid: string) => call<Pool>('POST', `/pools/${poolId}/confirm?participant_id=${pid}`),
-  poolWithdraw: (poolId: string, pid: string) => call<Pool>('POST', `/pools/${poolId}/withdraw?participant_id=${pid}`),
-  parseRule: (lotId: string, text: string) => call<ParsedRule>('POST', `/lots/${lotId}/rules/parse`, { text }),
-  saveRule: (lotId: string, rule: Rule, text: string, source: Source) =>
-    call<Lot>('POST', `/lots/${lotId}/rules`, { rule, text, source: source === 'ai' ? 'ai' : 'template' }),
-  sellerRequests: (lotId: string) => call<{ lot: Lot; requests: SellerRequest[] }>('GET', `/lots/${lotId}/requests`),
-  decisions: () => call<Decision[]>('GET', '/decisions?limit=60'),
-  fund: () => call<Fund>('GET', '/fund'),
-  reset: () => call<{ ok: boolean }>('POST', '/demo/reset'),
+  me: () => call<Me>('GET', '/me'),
+  reset: () => call<{ ok: true }>('POST', '/demo/reset'),
+  need: (text: string) => call<NeedResult>('POST', '/need', { text }),
+  pool: (id: string, qty_t: number) => call<Pool>('GET', `/pools/${id}?qty_t=${qty_t}`),
+  join: (id: string, qty_t: number) => call<JoinResult>('POST', `/pools/${id}/join`, { qty_t }),
+  auction: (id: string) => call<Auction>('GET', `/pools/${id}/auction`),
+  deal: (id: string) => call<Deal>('GET', `/deals/${id}`),
+  pay: (id: string) => call<Deal>('POST', `/deals/${id}/pay`),
+  confirm: (id: string) => call<Deal>('POST', `/deals/${id}/confirm`),
+  openDispute: (id: string) => call<Deal>('POST', `/deals/${id}/dispute`),
+  dispute: (id: string) => call<Dispute>('GET', `/deals/${id}/dispute`),
+  accept: (id: string) => call<{ deal: Deal; dispute: Dispute }>('POST', `/deals/${id}/dispute/accept`),
+  escalate: (id: string) => call<{ deal: Deal; dispute: Dispute }>('POST', `/deals/${id}/dispute/escalate`),
 }
