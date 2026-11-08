@@ -1,216 +1,141 @@
-import { useEffect, useRef, useState, type ReactNode } from 'react'
-import type { Explanation } from '../api'
+import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
+import { createPortal } from 'react-dom'
+import { reduceMotion } from '../format'
 
-export const Icon = {
-  arrow: (
-    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      <path d="M5 12h14M13 6l6 6-6 6" />
+const EASE = 'cubic-bezier(.23,1,.32,1)'
+
+/** Число, которое меняется как в макете: старое уходит вверх, новое приходит снизу. */
+export function Roll({ text, small, className }: { text: string; small?: string; className?: string }) {
+  const ref = useRef<HTMLSpanElement>(null)
+  const [shown, setShown] = useState({ text, small })
+  const first = useRef(true)
+  useEffect(() => {
+    if (first.current) {
+      first.current = false
+      return
+    }
+    const el = ref.current
+    if (!el || reduceMotion() || !el.animate) {
+      setShown({ text, small })
+      return
+    }
+    el.getAnimations().forEach((a) => a.cancel())
+    const out = el.animate([{ transform: 'none', opacity: 1 }, { transform: 'translateY(-30%)', opacity: 0 }], {
+      duration: 110,
+      easing: 'ease-in',
+      fill: 'forwards',
+    })
+    out.onfinish = () => {
+      setShown({ text, small })
+      out.cancel()
+      el.animate(
+        [
+          { transform: 'translateY(30%)', opacity: 0, filter: 'blur(2px)' },
+          { transform: 'none', opacity: 1, filter: 'blur(0)' },
+        ],
+        { duration: 240, easing: EASE },
+      )
+    }
+  }, [text, small])
+  return (
+    <span ref={ref} className={`tick ${className ?? ''}`}>
+      {shown.text}
+      {shown.small && <small>{shown.small}</small>}
+    </span>
+  )
+}
+
+export function Check() {
+  return (
+    <svg className="ck" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M5 12.5l4.5 4.5L19 7.5" />
     </svg>
-  ),
-  check: (
-    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      <path d="M5 12l5 5 9-10" />
-    </svg>
-  ),
-  cross: (
-    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" aria-hidden="true">
+  )
+}
+
+export function Cross({ size = 16 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" aria-hidden="true">
       <path d="M6 6l12 12M18 6L6 18" />
     </svg>
-  ),
-  truck: (
-    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      <path d="M3 6h11v10H3zM14 9h4l3 3v4h-7" />
-      <circle cx="7" cy="17.5" r="1.8" />
-      <circle cx="17" cy="17.5" r="1.8" />
-    </svg>
-  ),
-  pin: (
-    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      <path d="M12 21s-7-6.2-7-11.5A7 7 0 0 1 19 9.5C19 14.8 12 21 12 21z" />
-      <circle cx="12" cy="9.5" r="2.5" />
-    </svg>
-  ),
-  cal: (
-    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      <rect x="3.5" y="5" width="17" height="15" rx="2" />
-      <path d="M3.5 10h17M8 3v4M16 3v4" />
-    </svg>
-  ),
-  box: (
-    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      <path d="M21 8l-9-5-9 5 9 5 9-5zM3 8v8l9 5 9-5V8M12 13v8" />
-    </svg>
-  ),
-}
-
-export function Button(props: {
-  children: ReactNode
-  onClick?: () => void
-  icon?: boolean
-  ghost?: boolean
-  disabled?: boolean
-  busy?: boolean
-}) {
-  return (
-    <button
-      type="button"
-      className={`btn ${props.ghost ? 'btn--ghost' : ''}`}
-      onClick={props.onClick}
-      disabled={props.disabled || props.busy}
-      aria-busy={props.busy || undefined}
-    >
-      <span className="btn__label">
-        <span className="btn__text">{props.busy ? 'Секунду…' : props.children}</span>
-      </span>
-      {props.icon && <span className="btn__icon">{Icon.arrow}</span>}
-    </button>
   )
 }
 
-export function Segmented<T extends string | number>(props: {
-  label: string
-  value: T
-  options: { value: T; label: ReactNode; disabled?: boolean }[]
-  onChange: (v: T) => void
-}) {
+export const Arrow = () => <span className="ar">→</span>
+
+/** Нижняя панель с главными кнопками шага: всегда под рукой без прокрутки, как в макете. */
+export function ActionBar({ children }: { children: ReactNode }) {
+  const [host, setHost] = useState<HTMLElement | null>(null)
+  useLayoutEffect(() => {
+    setHost(document.getElementById('actbar-row'))
+  }, [])
+  const has = !!children && !(Array.isArray(children) && children.every((c) => !c))
+  useLayoutEffect(() => {
+    const bar = document.getElementById('actbar')
+    if (!bar) return
+    bar.hidden = !has
+    document.body.classList.toggle('has-bar', has)
+    return () => {
+      bar.hidden = true
+      document.body.classList.remove('has-bar')
+    }
+  }, [has])
+  return host && has ? createPortal(children, host) : null
+}
+
+/** Кольцо пула: одна точка — одна тонна. Доли идут в порядке вступления. */
+export function Ring({ lot, segments, full }: { lot: number; segments: { you: boolean; qty_t: number }[]; full: boolean }) {
+  const cls: string[] = []
+  for (const s of segments) for (let i = 0; i < Math.round(s.qty_t); i++) cls.push(s.you ? 'you' : 'on')
+  const filled = segments.reduce((a, s) => a + s.qty_t, 0)
+  const dots = Array.from({ length: lot }, (_, i) => {
+    const ang = ((-90 + (360 / lot) * i) * Math.PI) / 180
+    return <circle key={i} cx={(120 + 108 * Math.cos(ang)).toFixed(2)} cy={(120 + 108 * Math.sin(ang)).toFixed(2)} r="4.8" className={cls[i] ?? ''} />
+  })
   return (
-    <div className="seg-c" role="radiogroup" aria-label={props.label}>
-      {props.options.map((o) => (
-        <button
-          key={String(o.value)}
-          type="button"
-          role="radio"
-          className="seg-c__item"
-          aria-checked={o.value === props.value}
-          disabled={o.disabled}
-          style={o.disabled ? { opacity: 0.4, cursor: 'not-allowed' } : undefined}
-          onClick={() => !o.disabled && props.onChange(o.value)}
-        >
-          {o.label}
+    <div className={`ring${full ? ' full' : ''}`} role="img" aria-label={`Пул заполнен на ${filled} из ${lot} тонн`}>
+      <svg viewBox="0 0 240 240" aria-hidden="true">
+        {dots}
+      </svg>
+      <div className="c">
+        <span className="v">{filled}</span>
+        <span className="small muted">из {lot} т</span>
+      </div>
+    </div>
+  )
+}
+
+/** Шкала задатка 1–10%: закрашено столько делений, сколько процентов (с округлением вверх). */
+export function Seg({ value, max }: { value: number; max: number }) {
+  const on = Math.ceil(value)
+  return (
+    <div className="seg" aria-hidden="true">
+      {Array.from({ length: max }, (_, i) => (
+        <i key={i} className={i < on ? 'on' : ''} />
+      ))}
+    </div>
+  )
+}
+
+export function ErrorNote({ error, onRetry }: { error: string; onRetry?: () => void }) {
+  return (
+    <div className="err fade" role="alert">
+      <span>{error}</span>
+      {onRetry && (
+        <button className="btn sm outline" type="button" onClick={onRetry}>
+          Повторить
         </button>
-      ))}
-    </div>
-  )
-}
-
-// Уровень бейджа — только цвет для показа; само число рейтинга приходит с бэкенда.
-export function Trust({ r, word }: { r: number; word?: string }) {
-  const lvl = r >= 75 ? 'high' : r >= 55 ? 'mid' : 'low'
-  return (
-    <span className={`trust trust--${lvl}`} title="Рейтинг доверия">
-      <span className="trust__s">{r}</span>
-      {word}
-    </span>
-  )
-}
-
-/** Текст ИИ появляется по словам, как в макете. */
-export function Reveal({ text }: { text: string }) {
-  const words = text.split(/(\s+)/)
-  let i = 0
-  return (
-    <>
-      {words.map((w, k) =>
-        /^\s+$/.test(w) ? (
-          w
-        ) : (
-          <span key={`${text.length}-${k}`} className="word" style={{ ['--d' as string]: `${Math.min(i++ * 28, 560)}ms` }}>
-            {w}
-          </span>
-        ),
       )}
-    </>
+    </div>
   )
 }
 
-const SOURCE_TEXT = {
-  explain: { ai: 'Текст написал ИИ по цифрам из формул', other: 'Текст собран по шаблону: ИИ недоступен, цифры те же' },
-  rule: { ai: 'ИИ разобрал текст. Правило начнет действовать после вашего подтверждения', other: 'ИИ недоступен: условия заполняются вручную' },
-}
-
-export function SourceLabel({ e, kind = 'explain' }: { e: Explanation | { source: string }; kind?: keyof typeof SOURCE_TEXT }) {
-  const ai = e.source === 'ai'
+export function Typing() {
   return (
-    <span className={`src ${ai ? 'src--ai' : ''}`}>
-      <span className="src__dot" aria-hidden="true" />
-      {ai ? SOURCE_TEXT[kind].ai : SOURCE_TEXT[kind].other}
+    <span className="typing" aria-label="ИИ печатает">
+      <i />
+      <i />
+      <i />
     </span>
   )
-}
-
-export function AiCard(props: { tag: string; thinking?: boolean; title?: ReactNode; children?: ReactNode; className?: string }) {
-  return (
-    <div className={`card card--ai ${props.className ?? ''}`} aria-live="polite">
-      <span className={`ai ${props.thinking ? 'ai--thinking' : ''}`}>
-        <span className="ai__dot" />
-        {props.tag}
-      </span>
-      {props.title && <p className="ai-title">{props.title}</p>}
-      {props.children}
-    </div>
-  )
-}
-
-export function Scale({ pct, max = 15 }: { pct: number; max?: number }) {
-  // Положение метки на шкале 15% → 0%: чистое отображение числа от бэкенда.
-  const p = Math.max(0, Math.min(100, ((max - pct) / max) * 100))
-  return (
-    <>
-      <div className="scale" style={{ ['--p' as string]: `${p}%` }} role="img" aria-label={`Залог ${pct}% из возможных ${max}%`}>
-        <span className="scale__fill" />
-        <span className="scale__pin" />
-      </div>
-      <div className="scale__ends">
-        <span>15% — после срывов</span>
-        <span>1% — рейтинг 90+</span>
-      </div>
-    </>
-  )
-}
-
-export function PoolBar({ segments, total, big }: { segments: { id: string; t: number; kind: 'you' | 'ok' | 'wait' }[]; total: number; big?: boolean }) {
-  const used = segments.reduce((a, s) => a + s.t, 0)
-  const free = Math.max(0, total - used)
-  return (
-    <div className={`bar ${big ? 'bar--big' : ''}`} role="img" aria-label={`Собрано ${used} из ${total} т`}>
-      {segments.map((s) => (
-        <span
-          key={s.id}
-          className={`seg ${s.kind === 'you' ? 'seg--you' : ''}`}
-          style={{ ['--t' as string]: s.t, ...(s.kind === 'wait' ? { background: 'var(--stone)' } : {}) }}
-        />
-      ))}
-      {free > 0 && <span className="seg seg--free" style={{ ['--t' as string]: free }} />}
-    </div>
-  )
-}
-
-export function ErrorBox({ error }: { error: unknown }) {
-  if (!error) return null
-  const msg = error instanceof Error ? error.message : String(error)
-  return (
-    <div className="error" role="alert">
-      {msg}
-    </div>
-  )
-}
-
-/** Загрузка данных с повтором по ключу. Ошибка видна, без тихих подстановок. */
-export function useLoad<T>(fn: () => Promise<T>, deps: unknown[]) {
-  const [data, setData] = useState<T | null>(null)
-  const [error, setError] = useState<unknown>(null)
-  const [loading, setLoading] = useState(true)
-  const seq = useRef(0)
-  const run = () => {
-    const my = ++seq.current
-    setLoading(true)
-    setError(null)
-    fn()
-      .then((d) => my === seq.current && setData(d))
-      .catch((e) => my === seq.current && setError(e))
-      .finally(() => my === seq.current && setLoading(false))
-  }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  useEffect(run, deps)
-  return { data, error, loading, reload: run, setData }
 }
