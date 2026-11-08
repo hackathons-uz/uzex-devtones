@@ -1,19 +1,37 @@
 import { useEffect, useRef, useState } from 'react'
-import { api, type Auction as AuctionT } from '../api'
-import { fmt, fmtDec, sleep } from '../format'
-import { ActionBar, Arrow, ErrorNote, Roll } from '../components/ui'
+import { api, type Auction as AuctionT, type Seller } from '../api'
+import { fmt, fmtDec, plural, sleep } from '../format'
+import { ActionBar, Arrow, Dr, ErrorNote, Roll } from '../components/ui'
+import { SELLER_LOGOS } from '../components/sellerLogos'
 
 const COUNTDOWN_S = 5
 const ROUND_MS = 1400
 
 type Phase = 'wait' | 'run' | 'done'
 
+function Logo({ id, name, lg }: { id: string; name: string; lg?: boolean }) {
+  const svg = SELLER_LOGOS[id]
+  if (svg) return <span className={`lg${lg ? ' lg-lg' : ''}`} dangerouslySetInnerHTML={{ __html: svg }} />
+  const letter = name.replace(/^[^«]*«/, '').charAt(0)
+  return (
+    <span className={`lg${lg ? ' lg-lg' : ''}`} aria-hidden="true">
+      <svg viewBox="0 0 48 48">
+        <rect width="48" height="48" fill="var(--burgundy)" />
+        <text x="24" y="31" textAnchor="middle" fontWeight="800" fontSize="20" fill="var(--on-burgundy)">
+          {letter}
+        </text>
+      </svg>
+    </span>
+  )
+}
+
 /**
  * Шаг 3: торги. Ставки и победителя считает бэкенд; экран проигрывает раунды ускоренно:
- * в демо 30 минут торгов занимают несколько секунд.
+ * в демо 30 минут торгов занимают несколько секунд. После конца первым идет итог, как в макете.
  */
 export function Auction({
   poolId,
+  qty,
   data,
   played,
   onData,
@@ -21,6 +39,7 @@ export function Auction({
   onToDeal,
 }: {
   poolId: string
+  qty: number
   data: AuctionT | null
   played: boolean
   onData: (a: AuctionT) => void
@@ -52,7 +71,6 @@ export function Auction({
         setCount(c)
         await sleep(1000)
       }
-      setCount(0)
       setPhase('run')
       for (let r = 1; r <= data.rounds.length; r++) {
         setRound(r)
@@ -60,6 +78,7 @@ export function Auction({
       }
       setPhase('done')
       onPlayed()
+      window.scrollTo({ top: 0, behavior: 'smooth' })
     })()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [data])
@@ -79,111 +98,169 @@ export function Auction({
   const MIN = Math.floor((Math.min(...all) * 0.94) / 100) * 100
   const MAX = Math.ceil((Math.max(...all) * 1.02) / 100) * 100
   const width = (p: number) => ((p - MIN) / (MAX - MIN)) * 100
+  const lastBid = (i: number, upto: number) =>
+    data.rounds
+      .slice(0, upto)
+      .map((r) => r.bids[i].price)
+      .filter((p): p is number => p !== null)
+      .at(-1)
+  const done = phase === 'done'
+  const qtyText = String(qty).replace('.', ',')
+  const yourSum = Math.round(qty * 1000 * data.final_price)
+  const saving = Math.round(qty * 1000 * (data.retail_uzs - data.final_price))
+  const w: Seller = data.winner
 
-  let clockLabel = 'Старт через'
-  let clock = <Roll text={`0:0${count}`} />
-  if (phase === 'run') {
-    clockLabel = 'До конца торгов'
-    clock = <Roll text={String(totalMin - (round - 1) * data.round_min)} small="мин" />
-  } else if (phase === 'done') {
-    clockLabel = 'Торги длились'
-    clock = <Roll text={String(totalMin)} small="мин" />
-  }
+  const result = done && (
+    <div className="card result fade">
+      <div className="res-top">
+        <div className="res-who">
+          <span className="cap">Победитель торгов</span>
+          <span className="res-id">
+            <Logo id={w.id} name={w.name} lg />
+            <b className="res-name">{w.name}</b>
+          </span>
+          <span className="meta">
+            <Dr value={w.rating} kind="seller" />
+            <span className="rel">{w.on_time_pct}% без срывов</span>
+          </span>
+        </div>
+        <div className="res-price">
+          <span className="cap">Цена для всех в пуле</span>
+          <div className="big num">
+            {fmt(data.final_price)}
+            <small>сум/кг</small>
+          </div>
+        </div>
+      </div>
+      <div className="res-stats">
+        <div>
+          <b className="num">{fmt(yourSum)} сум</b>
+          <span>за ваши {qtyText} т</span>
+        </div>
+        <div>
+          <b className="num good">{fmt(saving)} сум</b>
+          <span>экономия — на {data.below_retail_pct}% дешевле, чем в магазине</span>
+        </div>
+      </div>
+      <details>
+        <summary>
+          <span>
+            Почему победил этот продавец? <span className="muted small">объясняет Davra</span>
+          </span>
+        </summary>
+        <div className="in">
+          <p className="small muted">Последние ставки, сум/кг</p>
+          <dl className="calc bids">
+            {data.sellers
+              .map((s, i) => ({ s, bid: lastBid(i, total)!, out: data.rounds[total - 1].bids[i].price === null }))
+              .sort((a, b) => (a.s.id === w.id ? -1 : b.s.id === w.id ? 1 : a.bid - b.bid))
+              .map(({ s, bid, out }) => (
+                <div key={s.id} className={s.id === w.id ? 'tot first' : undefined}>
+                  <dt>
+                    {s.short} · {s.id === w.id ? `${s.on_time_pct}% без срывов` : out ? 'вышел' : 'не победил'}
+                  </dt>
+                  <dd className="num">{fmt(bid)}</dd>
+                </div>
+              ))}
+          </dl>
+          {data.explain.points.map((p) => (
+            <p key={p} className="small muted">
+              {p}
+            </p>
+          ))}
+          {data.explain.source === 'template' && <p className="src">Текст собран по шаблону: Claude сейчас недоступен</p>}
+        </div>
+      </details>
+    </div>
+  )
 
   return (
     <section className="scr" aria-labelledby="h-auction">
       <h1 className="sr" id="h-auction">
         Торги
       </h1>
+      {result}
       <div className="card">
-        <div className="ticker" aria-live="polite">
-          <div>
-            <span className="cap">{clockLabel}</span>
-            <div className="big num">{clock}</div>
-          </div>
-          <div>
-            <span className="cap">Лучшая цена, сум/кг</span>
-            <div className="big num">
-              <Roll text={cur ? fmt(cur.best_price) : '—'} />
+        {!done && (
+          <>
+            <div className="a-head" aria-live="polite">
+              <div>
+                <span className="cap">Лучшая цена, сум/кг</span>
+                <div className="big num">
+                  <Roll text={cur ? fmt(cur.best_price) : '—'} />
+                </div>
+              </div>
+              {phase === 'wait' ? (
+                <span className="tag neutral">Запланированы</span>
+              ) : (
+                <span className="tag warning">
+                  <span className="dot" />
+                  Идут торги
+                </span>
+              )}
             </div>
-          </div>
-          <div>
-            <span className="cap">Раунд</span>
-            <div className="big num">
-              <Roll text={String(round)} small={`из ${total}`} />
+            <div className="sched">
+              <div className="meter">
+                <i style={{ width: `${((round / total) * 100).toFixed(1)}%` }} />
+              </div>
+              <div className="seg-l">
+                <span>
+                  Раунд <b className="num">{round}</b> из {total}
+                </span>
+                <span>
+                  {phase === 'wait' ? 'Старт через' : 'До конца'}{' '}
+                  <b className="num">{phase === 'wait' ? `0:0${count}` : `${totalMin - (round - 1) * data.round_min} мин`}</b>
+                </span>
+              </div>
             </div>
-          </div>
-          {phase === 'wait' && <span className="tag neutral">Запланированы</span>}
-          {phase === 'run' && (
-            <span className="tag warning">
-              <span className="dot" />
-              Идут торги
-            </span>
-          )}
-          {phase === 'done' && <span className="tag success">Завершены · победил {data.winner.short}</span>}
+            {phase === 'wait' && <p className="small muted">Торги начнутся сами — можно закрыть страницу и вернуться позже.</p>}
+          </>
+        )}
+        <div className="lots-h">
+          <h2>Продавцы на торгах</h2>
+          <span className="small muted">
+            {done
+              ? `${total} раундов · ${totalMin} мин`
+              : `${data.sellers.length} ${plural(data.sellers.length, 'продавец снижает', 'продавца снижают', 'продавцов снижают')} цену`}
+          </span>
         </div>
-        <div className="sched">
-          <div className="meter">
-            <i style={{ width: `${((round / total) * 100).toFixed(1)}%` }} />
-          </div>
-          <div className="seg-l">
-            <span>Старт · автоматически</span>
-            <span>
-              {totalMin} мин · {total} раундов по {data.round_min} мин
-            </span>
-          </div>
-        </div>
-        <p className="small">
-          {phase === 'wait' && 'Торги запускает биржа сама, как только пул собран. Делать ничего не нужно: можно закрыть страницу, итог придёт уведомлением.'}
-          {phase === 'run' && `Торги идут. Каждый раунд длится ${data.round_min} минут, продавцы могут только снижать цену.`}
-          {phase === 'done' && `Торги завершены автоматически после ${total}-го раунда.`}
-        </p>
         <div className="lots">
           {data.sellers.map((s, i) => {
             const bid = cur?.bids[i].price
             const out = !!cur && bid === null
-            // У вышедшего продавца полоса остается на его последней цене, как в макете.
-            const lastBid = data.rounds
-              .slice(0, round)
-              .map((r) => r.bids[i].price)
-              .filter((p): p is number => p !== null)
-              .at(-1)
             const best = !!cur && cur.leader_id === s.id
+            const win = done && s.id === w.id
+            const lb = lastBid(i, round)
             return (
-              <div key={s.id} className={`lot${out ? ' out' : ''}${best ? ' best' : ''}`}>
+              <div key={s.id} className={`lot${out ? ' out' : ''}${best ? ' best' : ''}${win ? ' win' : ''}`}>
+                <Logo id={s.id} name={s.name} />
                 <div className="nm">
-                  {s.name}
-                  <small>
-                    рейтинг {fmtDec(s.rating)} · {s.on_time_pct}% без срывов
-                  </small>
+                  <b>{s.name}</b>
+                  <span className="meta">
+                    <span className="ds">{s.about}</span>
+                    <Dr value={s.rating} kind="seller" />
+                  </span>
                 </div>
                 <div className="track">
-                  <i style={{ width: '100%', clipPath: lastBid ? `inset(0 ${(100 - width(lastBid)).toFixed(1)}% 0 0 round 1000px)` : undefined }} />
+                  <i style={{ width: '100%', clipPath: lb ? `inset(0 ${(100 - width(lb)).toFixed(1)}% 0 0 round 1000px)` : undefined }} />
                 </div>
-                <div className="pr">{out ? 'вышел' : bid ? <Roll text={fmt(bid)} /> : '—'}</div>
+                <div className="pr">
+                  {win && <span className="win-tag">Победитель</span>}
+                  {out ? 'вышел' : bid ? <Roll text={fmt(bid)} /> : '—'}
+                </div>
               </div>
             )
           })}
+          {data.excluded.length > 0 && (
+            <p className="excluded">
+              Не допущен к торгам пулов (рейтинг ниже 4,0): {data.excluded.map((e) => `${e.name}, ${fmtDec(e.rating)}`).join('; ')}.
+            </p>
+          )}
         </div>
-        <p className="small muted">
-          Рядом с продавцом указаны рейтинг и доля поставок без срывов. Продавцы с рейтингом ниже 4,0 к торгам пулов не допускаются
-          {data.excluded.length > 0 ? `: в этот раз не допущен ${data.excluded.map((e) => `${e.name} (${fmtDec(e.rating)})`).join(', ')}.` : '.'}
-        </p>
       </div>
-      {phase === 'done' && (
-        <div className="card band explain fade">
-          <h2>ИИ объясняет, как сложилась цена {fmt(data.final_price)} сум/кг</h2>
-          <ol>
-            {data.explain.points.map((p) => (
-              <li key={p}>{p}</li>
-            ))}
-          </ol>
-          {data.explain.source === 'template' && <p className="src">Текст собран по шаблону: Claude сейчас недоступен</p>}
-        </div>
-      )}
       <ActionBar>
-        {phase === 'done' && data.deal_id && (
-          <button className="btn inverse" type="button" onClick={onToDeal}>
+        {done && data.deal_id && (
+          <button className="btn" type="button" onClick={onToDeal}>
             К сделке <Arrow />
           </button>
         )}

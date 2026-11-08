@@ -5,7 +5,7 @@ import { fmt, plural } from '../format'
 import { canRecord, startRecording, type Recording } from '../components/recorder'
 import { reduceMotion } from '../format'
 import { Arrow, Cross, Check } from '../components/ui'
-import type { Draft } from '../drafts'
+import type { Stage } from '../threads'
 
 const fmtQty = (n: number) => String(n).replace('.', ',')
 
@@ -16,18 +16,20 @@ export function Intro({
   initial,
   offer,
   onDismissOffer,
-  drafts,
+  resume,
+  count,
   onSend,
-  onPickDraft,
-  onShowDrafts,
+  onResume,
+  onShowAll,
 }: {
   initial: string
   offer: Offer | null
   onDismissOffer: () => void
-  drafts: Draft[]
+  resume: { title: string; stage: Stage } | null
+  count: number
   onSend: (text: string) => void
-  onPickDraft: (t: string) => void
-  onShowDrafts: () => void
+  onResume: () => void
+  onShowAll: () => void
 }) {
   const [value, setValue] = useState(initial)
   const [exI, setExI] = useState(0)
@@ -162,7 +164,7 @@ export function Intro({
             }}
           />
           <button className="btn" type="button" onClick={send}>
-            Найти решение <Arrow />
+            Найти <Arrow />
           </button>
           {rec && (
             <div className="rec">
@@ -194,7 +196,7 @@ export function Intro({
       {rec ? (
         <p className="rec-hint">Говорите своими словами, на узбекском или русском</p>
       ) : (
-        <p className="intro-hint">{voiceError ?? 'Своими словами, текстом или голосом, на узбекском или русском. Коды товаров знать не нужно.'}</p>
+        <p className="intro-hint">{voiceError ?? 'Пишите или говорите как удобно, на узбекском или русском. Davra сам переведёт на язык биржи.'}</p>
       )}
       {offer && !rec && (
         <div className="offer msg ai fade">
@@ -221,17 +223,18 @@ export function Intro({
           </div>
         </div>
       )}
-      {drafts.length > 0 && (
+      {resume && (
         <div className="resume">
-          <button className="open" type="button" onClick={() => onPickDraft(drafts[0].t)}>
+          <button className="open" type="button" onClick={onResume}>
             <span className="t2">
-              Черновик · {drafts[0].s} · {drafts[0].at}
+              <span>Продолжить</span>
+              <span className={`st st-${resume.stage.kind}`}>{resume.stage.text}</span>
             </span>
-            <span className="t1">{drafts[0].t}</span>
+            <span className="t1">{resume.title}</span>
           </button>
-          {drafts.length > 1 && (
-            <button className="all" type="button" onClick={onShowDrafts}>
-              Все {drafts.length}
+          {count > 1 && (
+            <button className="all" type="button" onClick={onShowAll}>
+              Все {count}
             </button>
           )}
         </div>

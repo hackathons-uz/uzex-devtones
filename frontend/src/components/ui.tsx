@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { reduceMotion } from '../format'
 
@@ -63,24 +63,13 @@ export function Cross({ size = 16 }: { size?: number }) {
 
 export const Arrow = () => <span className="ar">→</span>
 
-/** Нижняя панель с главными кнопками шага: всегда под рукой без прокрутки, как в макете. */
+/** Главные кнопки шага: уходят в плавающую панель внизу, рядом с шагами. Панель рисует App. */
 export function ActionBar({ children }: { children: ReactNode }) {
   const [host, setHost] = useState<HTMLElement | null>(null)
   useLayoutEffect(() => {
     setHost(document.getElementById('actbar-row'))
   }, [])
-  const has = !!children && !(Array.isArray(children) && children.every((c) => !c))
-  useLayoutEffect(() => {
-    const bar = document.getElementById('actbar')
-    if (!bar) return
-    bar.hidden = !has
-    document.body.classList.toggle('has-bar', has)
-    return () => {
-      bar.hidden = true
-      document.body.classList.remove('has-bar')
-    }
-  }, [has])
-  return host && has ? createPortal(children, host) : null
+  return host ? createPortal(children, host) : null
 }
 
 /** Кольцо пула: одна точка — одна тонна. Доли идут в порядке вступления. */
@@ -105,17 +94,42 @@ export function Ring({ lot, segments, full }: { lot: number; segments: { you: bo
   )
 }
 
-/** Шкала задатка 1–10%: закрашено столько делений, сколько процентов (с округлением вверх). */
-export function Seg({ value, max }: { value: number; max: number }) {
-  const on = Math.ceil(value)
+/**
+ * Рейтинг шкалой с меткой Davra, как в макете. Покупатель — 0..100, продавец — 3,0..5,0;
+ * у продавца риска посередине — порог допуска 4,0. Подсказку по наведению показывает App.
+ */
+export function Dr({ value, kind, lg }: { value: number; kind: 'buyer' | 'seller'; lg?: boolean }) {
+  const p = kind === 'buyer' ? value : ((value - 3) / 2) * 100
+  const v = kind === 'buyer' ? String(value) : value.toFixed(1).replace('.', ',')
   return (
-    <div className="seg" aria-hidden="true">
-      {Array.from({ length: max }, (_, i) => (
-        <i key={i} className={i < on ? 'on' : ''} />
-      ))}
-    </div>
+    <span
+      className={`dr${lg ? ' lg' : ''}`}
+      tabIndex={0}
+      data-v={v}
+      data-kind={kind}
+      style={{ '--p': `${Math.max(0, Math.min(100, p)).toFixed(1)}%` } as CSSProperties}
+      role="img"
+      aria-label={`рейтинг ${v} из ${kind === 'buyer' ? 100 : 5}`}
+    >
+      <span className="dr-track" aria-hidden="true">
+        <i className="dr-fill" />
+        {kind === 'seller' && <i className="dr-tick" style={{ left: '50%' }} />}
+        <span className="dr-thumb">
+          <svg viewBox="0 0 512 512">
+            <use href="#davra-mark" />
+          </svg>
+        </span>
+      </span>
+      {!lg && <b aria-hidden="true">{v}</b>}
+    </span>
   )
 }
+
+export const AiWho = () => (
+  <span className="who">
+    Davra <span className="ai-tag">ИИ</span>
+  </span>
+)
 
 export function ErrorNote({ error, onRetry }: { error: string; onRetry?: () => void }) {
   return (

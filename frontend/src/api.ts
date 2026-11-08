@@ -116,7 +116,7 @@ export type Pool = {
 
 export type JoinResult = { pool: Pool; events: { name: string; qty_t: number }[] }
 
-export type Seller = { id: string; name: string; short: string; rating: number; on_time_pct: number }
+export type Seller = { id: string; name: string; short: string; about: string; rating: number; on_time_pct: number }
 
 export type Auction = {
   sellers: Seller[]
@@ -128,6 +128,7 @@ export type Auction = {
   dropped_count: number
   below_retail_pct: number
   below_avg_pct: number
+  retail_uzs: number
   explain: { points: string[]; source: Source }
   deal_id: string | null
 }

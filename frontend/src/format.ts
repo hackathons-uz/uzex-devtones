@@ -6,8 +6,8 @@ export const fmtDec = (n: number) => String(n).replace('.', ',')
 
 export const pct = (n: number) => `${fmtDec(n)}%`
 
-/** −3,0% / +0,5%: знак всегда, одна цифра после запятой, как в макете. */
-export const pp = (n: number) => `${n > 0 ? '+' : '−'}${Math.abs(n).toFixed(1).replace('.', ',')}%`
+/** −3% / −2,5% / +0,5%: знак всегда, как в новом макете. */
+export const pp = (n: number) => `${n > 0 ? '+' : '−'}${fmtDec(Math.abs(n))}%`
 
 export function plural(n: number, one: string, few: string, many: string) {
   const m = Math.abs(n) % 100

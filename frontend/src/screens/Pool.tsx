@@ -1,7 +1,10 @@
 import { useEffect, useState } from 'react'
 import { api, type Pool as PoolT } from '../api'
-import { fmt, pct, plural, pp, sleep } from '../format'
-import { ActionBar, Arrow, Check, ErrorNote, Ring, Roll, Seg } from '../components/ui'
+import { fmt, fmtDec, pct, plural, pp, sleep } from '../format'
+import { ActionBar, Arrow, Check, Dr, ErrorNote, Ring, Roll } from '../components/ui'
+
+// «за октябрь» -> «в октябре»: подпись в чеке цены, как в макете.
+const MONTH_IN: Record<string, string> = { январь: 'январе', февраль: 'феврале', март: 'марте', апрель: 'апреле', май: 'мае', июнь: 'июне', июль: 'июле', август: 'августе', сентябрь: 'сентябре', октябрь: 'октябре', ноябрь: 'ноябре', декабрь: 'декабре' }
 
 type Shown = { segments: PoolT['segments']; members: number; left: number }
 
@@ -90,6 +93,7 @@ export function Pool({
   const filled = pool.status === 'filled' && !animating
   const qtyText = String(pool.qty_t).replace('.', ',')
   const deposit = pool.you.deposit_uzs ?? t.deposit_uzs
+  const volPct = (p.volume_discount_pct[0] + p.volume_discount_pct[1]) / 2
 
   return (
     <section className="scr" aria-labelledby="h-pool">
@@ -116,7 +120,7 @@ export function Pool({
               </dd>
             </div>
             <div>
-              <dt>Лот</dt>
+              <dt>Цель</dt>
               <dd>
                 {pool.lot_t} т<small>{pool.lot_unit}</small>
               </dd>
@@ -153,40 +157,47 @@ export function Pool({
       </div>
       {filled && (
         <div className="done-banner fade">
-          Пул собран: {pool.lot_t} из {pool.lot_t} т, {pool.members} {plural(pool.members, 'участник', 'участника', 'участников')}. Биржа запустит торги автоматически.
+          Вагон собран: {pool.members} {plural(pool.members, 'участник', 'участника', 'участников')}. Торги начнутся сами.
         </div>
       )}
       {error && <ErrorNote error={error} />}
 
       <div className="grid2">
         <div className="card">
-          <span className="cap">Ожидаемая цена для вас</span>
+          <span className="cap">Ваша цена, примерно</span>
           <div className="big">
             {fmt(p.expected_uzs)}
             <small>сум/кг</small>
           </div>
-          <p>
-            <b className="good">−{p.discount_pct}%</b> к рознице{' '}
-            <span className="muted">
-              ({fmt(p.retail_uzs)} сум/кг в {pool.city === 'Самарканд' ? 'Самарканде' : pool.city})
+          <p className="price-meta">
+            <span>
+              <b className="good">На {p.discount_pct}% дешевле</b>, чем в магазине
+            </span>
+            <span aria-hidden="true">·</span>
+            <span>
+              <span className="num">{fmt(p.order_uzs)} сум</span> за {qtyText} т
             </span>
           </p>
-          <p className="small muted">
-            Ваши {qtyText} т ≈ {fmt(p.order_uzs)} сум вместо {fmt(p.retail_order_uzs)} сум
-          </p>
           <details>
-            <summary>Откуда эта цифра</summary>
+            <summary>Как посчитано</summary>
             <div className="in">
-              <p>
-                Средняя биржевая цена за {p.avg_month}: {fmt(p.avg_exchange_uzs)} сум/кг.
+              <dl className="calc">
+                <div>
+                  <dt>Средняя цена на бирже в {MONTH_IN[p.avg_month] ?? p.avg_month}</dt>
+                  <dd className="num">{fmt(p.avg_exchange_uzs)}</dd>
+                </div>
+                <div>
+                  <dt>Скидка за большой объём, {fmtDec(volPct)}%</dt>
+                  <dd className="num">−{fmt(p.avg_exchange_uzs - p.expected_uzs)}</dd>
+                </div>
+                <div className="tot">
+                  <dt>Ваша цена</dt>
+                  <dd className="num">{fmt(p.expected_uzs)} сум/кг</dd>
+                </div>
+              </dl>
+              <p className="small muted">
+                В магазинах {pool.city === 'Самарканд' ? 'Самарканда' : pool.city} — {fmt(p.retail_uzs)} сум/кг. Точную цену покажут торги.
               </p>
-              <p>
-                За полный {pool.lot_unit} продавцы дают скидку {p.volume_discount_pct[0]}–{p.volume_discount_pct[1]}% за объём.
-              </p>
-              <p>
-                {p.sellers_confirmed} {plural(p.sellers_confirmed, 'проверенный продавец уже подтвердил', 'проверенных продавца уже подтвердили', 'проверенных продавцов уже подтвердили')} участие.
-              </p>
-              <p className="muted">Итоговую цену определят торги, а не ИИ.</p>
             </div>
           </details>
         </div>
@@ -196,49 +207,48 @@ export function Pool({
             {pct(t.deposit_pct)}
             <small>{fmt(deposit)} сум</small>
           </div>
-          <Seg value={t.deposit_pct} max={t.deposit_max_pct} />
-          <div className="seg-l">
-            <span>{pct(t.deposit_min_pct)}</span>
-            <span>{pct(t.deposit_max_pct)}</span>
+          <div className="dep-r">
+            <span className="small muted">Зависит от вашего рейтинга</span>
+            <Dr value={t.rating} kind="buyer" />
           </div>
-          <div className="row" style={{ justifyContent: 'space-between' }}>
-            <span className="small">Рейтинг надёжности</span>
-            <b className="num">{t.rating} / 100</b>
-          </div>
-          <div className="meter" aria-hidden="true">
-            <i style={{ width: `${t.rating}%` }} />
-          </div>
-          <details open>
+          <details>
             <summary>
-              Почему {pct(t.deposit_pct)}, а не {pct(t.deposit_max_pct)}
+              Почему {pct(t.deposit_pct)}, а не {pct(t.deposit_max_pct)}?
             </summary>
             <div className="in">
-              <ul className="f">
+              <dl className="calc">
+                <div>
+                  <dt>Максимальный задаток</dt>
+                  <dd className="num">{pct(t.deposit_max_pct)}</dd>
+                </div>
                 {t.factors.map((f) => (
-                  <li key={f.key}>
-                    <span className={f.points >= 0 ? 'good' : 'bad'}>{f.points >= 0 ? '+' : '−'}</span>
-                    <span>{f.label}</span>
-                    <b className={f.points >= 0 ? 'good' : 'bad'}>{pp(f.deposit_pp)}</b>
-                  </li>
+                  <div key={f.key}>
+                    <dt>{f.label}</dt>
+                    <dd className="num">{pp(f.deposit_pp)}</dd>
+                  </div>
                 ))}
-              </ul>
+                <div className="tot">
+                  <dt>Ваш задаток</dt>
+                  <dd className="num">{pct(t.deposit_pct)}</dd>
+                </div>
+              </dl>
               {!!t.hint.deals && (
-                <p className="small">
-                  Ещё {t.hint.deals} {plural(t.hint.deals, 'сделка', 'сделки', 'сделок')} без задержек, и задаток станет не больше {pct(t.hint.target_pct)}.
+                <p className="small muted">
+                  Ещё {t.hint.deals} {plural(t.hint.deals, 'сделка', 'сделки', 'сделок')} без задержек — и будет не больше {pct(t.hint.target_pct)}.
                 </p>
               )}
             </div>
           </details>
+          <p className="guard">
+            <b>Без риска.</b> Пул не соберётся до {pool.deadline_text} — задаток вернётся. Кто-то не заплатит — вы всё равно получите свой товар.
+          </p>
         </div>
       </div>
 
-      <p className="note">
-        Если пул не соберётся до {pool.deadline_text}, задаток вернётся полностью. Если участник откажется платить после торгов, его задаток уходит в страховой фонд пула, и остальные получают свой товар.
-      </p>
       <ActionBar>
         {!pool.you.joined ? (
           <button className="btn" type="button" onClick={join} disabled={joining}>
-            Внести задаток и вступить <Arrow />
+            Вступить в пул <Arrow />
           </button>
         ) : filled ? (
           <button className="btn fade" type="button" onClick={onToAuction}>

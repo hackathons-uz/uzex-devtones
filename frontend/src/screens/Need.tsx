@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { api, type NeedField, type NeedResult, type NeedTurn } from '../api'
 import { fmt, sleep } from '../format'
 import { Mark } from '../components/Logo'
-import { ActionBar, Arrow, ErrorNote, Typing } from '../components/ui'
+import { ActionBar, AiWho, Arrow, ErrorNote, Typing } from '../components/ui'
 
 function Ai({ children, wide }: { children: ReactNode; wide?: boolean }) {
   return (
@@ -28,80 +28,45 @@ const Wheat = () => (
   </span>
 )
 
-/** Готовая заявка: «понял», карточка заявки и предложение пула. step — сколько частей уже показано. */
-function Complete({ r, step, first }: { r: NeedResult; step: number; first: boolean }) {
-  const s = r.spec
-  const pool = r.pool
-  return (
-    <>
-      {step >= 1 && (
-        <Ai>
-          <span className="who">ИИ-агент</span>
-          {first ? 'Понял. Вот как это выглядит на языке биржи:' : 'Обновил заявку:'}
-        </Ai>
-      )}
-      {step >= 2 && (
-        <Ai wide>
-          <div className="spec-head">
-            <Wheat />
-            <h2>Заявка-потребность</h2>
-          </div>
-          <dl className="spec" style={{ marginTop: 12 }}>
-            <dt>Товар</dt>
-            <dd>{s.product}</dd>
-            <dt>Объём</dt>
-            <dd>{String(s.qty_t).replace('.', ',')} т, разовая закупка</dd>
-            <dt>Доставка</dt>
-            <dd>
-              {s.hub}
-              {s.city_from_profile && <span className="muted"> · город из профиля</span>}
-            </dd>
-            <dt>Нужно до</dt>
-            <dd>
-              {s.due_text}
-              {s.due_source === 'flexible' && <span className="muted"> · срок не важен, ближайшая поставка</span>}
-            </dd>
-            {s.budget_uzs !== null && (
-              <>
-                <dt>Бюджет</dt>
-                <dd>до {fmt(s.budget_uzs)} сум/кг, по вашей истории закупок</dd>
-              </>
-            )}
-          </dl>
-          {r.source === 'template' && (
-            <p className="src" style={{ marginTop: 10 }}>
-              Разобрано правилами без ИИ: Claude сейчас недоступен
-            </p>
-          )}
-        </Ai>
-      )}
-      {step >= 3 && (
-        <Ai>
-          <span className="who">ИИ-агент</span>
-          {!pool
-            ? `Открытого пула с такой потребностью в городе ${s.city} сейчас нет. Напишите, что поменять, или начните новую заявку.`
-            : pool.joined
-              ? 'Вы уже в пуле с этой потребностью. Показать, как идут дела?'
-              : `${s.qty_t! < pool.lot_t ? `Один ${pool.lot_unit} на бирже — ${pool.lot_t} т, вам столько не нужно. Но я` : 'Я'} нашёл пул из ${pool.members} покупателей с той же потребностью. Это разовая закупка: пул собирается под одну поставку и закрывается после неё. Присоединиться?`}
-        </Ai>
-      )}
-    </>
-  )
-}
-
 /** Один круг диалога: сообщение покупателя и ответ агента на все сообщения до него. */
 export type NeedRound = { turn: NeedTurn; reply: NeedResult | null }
 
 /** Что спросить дальше. null — заявка полная. Вопрос пишет бэкенд; поздний пул — тоже вопрос о сроке. */
 function nextAsk(r: NeedResult): NeedField | null {
-  if (r.missing.length) return r.missing[0]
+  // Вопрос общий сразу обо всем; asked — объем, если он среди недостающих: голое «2» в ответ — это 2 т.
+  if (r.missing.length) return r.missing.includes('qty_t') ? 'qty_t' : r.missing[0]
   if (r.pool_late) return 'due'
   return null
 }
 
+type SpecKey = 'product' | 'vol' | 'hub' | 'date' | 'budget'
+const LABELS: Record<SpecKey, string> = { product: 'Товар', vol: 'Объём', hub: 'Доставка', date: 'Нужно до', budget: 'Бюджет' }
+
+/** Поля карточки заявки в формулировках макета. */
+function fields(r: NeedResult): Record<SpecKey, string | null> {
+  const s = r.spec
+  return {
+    product: s.product,
+    vol: s.qty_t ? `${String(s.qty_t).replace('.', ',')} т, разовая закупка` : null,
+    hub: s.hub + (s.city_from_profile ? ' · город из профиля' : ''),
+    date: s.due_text ? s.due_text + (s.due_source === 'flexible' ? ' · срок не важен' : '') : null,
+    budget: s.budget_uzs !== null ? `до ${fmt(s.budget_uzs)} сум/кг — как вы обычно покупаете` : null,
+  }
+}
+
+function poolText(r: NeedResult): string {
+  const s = r.spec
+  const pool = r.pool
+  if (!pool) return `Открытого пула с такой потребностью в городе ${s.city} сейчас нет. Напишите, что поменять, или начните новую заявку.`
+  if (pool.joined) return 'Вы уже в пуле с этой потребностью. Показать, как идут дела?'
+  if (s.qty_t! < pool.lot_t)
+    return `На бирже продают целыми вагонами по ${pool.lot_t} т — одному бизнесу столько не нужно. Я нашёл ${pool.members} пекарен, которым нужно то же самое. Скинемся на вагон вместе? Это разовая закупка, после поставки пул закроется.`
+  return `Я нашёл ${pool.members} покупателей, которым нужно то же самое. Это разовая закупка, после поставки пул закроется.`
+}
+
 /**
  * Шаг 1: заявка своими словами, обычным чатом. Если чего-то не хватает (товар, объем, срок), агент
- * спрашивает. Любое следующее сообщение уточняет заявку, даже готовую: «нет, давай 3 т».
+ * спрашивает. Любое следующее сообщение уточняет заявку: карточка обновляется на месте, как в макете.
  * Бэкенд разбирает все сообщения вместе, более позднее важнее. Чего не хватает, решает бэкенд.
  */
 export function Need({
@@ -121,8 +86,10 @@ export function Need({
   const reply = last.reply
   const ask = reply ? nextAsk(reply) : null
   const complete = !!reply && !ask
-  // Сколько сообщений финального ответа уже показано: 1 — «понял», 2 — заявка, 3 — пул.
-  const [shown, setShown] = useState(complete ? 3 : 0)
+  const doneIdx = rounds.map((r, i) => (r.reply && !nextAsk(r.reply) ? i : -1)).filter((i) => i >= 0)
+  const firstDone = doneIdx[0] ?? -1
+  // Сколько частей первого готового ответа показано: 1 — «понял», 2 — карточка, 3 — пул.
+  const [shown, setShown] = useState(firstDone >= 0 ? 3 : 0)
   const [error, setError] = useState<string | null>(null)
   const [attempt, setAttempt] = useState(0)
   const [answer, setAnswer] = useState('')
@@ -133,7 +100,8 @@ export function Need({
     if (reply) return
     let alive = true
     setError(null)
-    setShown(0)
+    const isFirst = firstDone < 0
+    if (isFirst) setShown(0)
     const started = Date.now()
     api
       .need(rounds.map((r) => r.turn))
@@ -144,6 +112,7 @@ export function Need({
         onRounds([...rounds.slice(0, -1), { ...last, reply: r }])
         if (nextAsk(r)) return
         onComplete(r)
+        if (!isFirst) return
         setShown(1)
         await sleep(350)
         if (alive) setShown(2)
@@ -170,6 +139,14 @@ export function Need({
     onRounds([...rounds, { turn: { text: t, asked: ask }, reply: null }])
   }
 
+  // Карточка одна: стоит на месте первого готового ответа и показывает последнюю версию заявки.
+  const latestDone = doneIdx.length ? rounds[doneIdx[doneIdx.length - 1]].reply! : null
+  const card = latestDone ? fields(latestDone) : null
+  const changed = new Set<SpecKey>()
+  if (card && doneIdx.length > 1) {
+    const prev = fields(rounds[doneIdx[doneIdx.length - 2]].reply!)
+    for (const k of Object.keys(card) as SpecKey[]) if (card[k] !== prev[k]) changed.add(k)
+  }
   const pool = reply?.pool
 
   return (
@@ -181,9 +158,36 @@ export function Need({
         {rounds.map((r, i) => {
           const isLast = i === rounds.length - 1
           const q = r.reply && nextAsk(r.reply)
-          // Сколько частей готового ответа показать: прошлые круги — сразу все, последний — по очереди.
-          const step = isLast ? shown : 3
-          const firstComplete = rounds.findIndex((x) => x.reply && !nextAsk(x.reply)) === i
+          const step = isLast && i === firstDone ? shown : 3
+          let update: ReactNode = null
+          if (r.reply && !q && i !== firstDone) {
+            // Уточнение готовой заявки: что поменялось по сравнению с предыдущей версией.
+            const prevReply = rounds[doneIdx[doneIdx.indexOf(i) - 1]].reply!
+            const before = fields(prevReply)
+            const now = fields(r.reply)
+            const diff = (Object.keys(now) as SpecKey[]).filter((k) => now[k] && now[k] !== before[k])
+            update = (
+              <Ai>
+                <AiWho />
+                {diff.length ? (
+                  <>
+                    Обновил заявку:
+                    <ul className="chg">
+                      {diff.map((k) => (
+                        <li key={k}>
+                          <span>{LABELS[k]}</span>
+                          <b>{k === 'vol' ? now[k]!.split(',')[0] : now[k]}</b>
+                        </li>
+                      ))}
+                    </ul>
+                    <span className="small muted">{r.reply.pool?.id === prevReply.pool?.id ? 'Остальное без изменений, пул тот же.' : poolText(r.reply)}</span>
+                  </>
+                ) : (
+                  'Не понял, что поменять. Напишите, например, новый объём или срок.'
+                )}
+              </Ai>
+            )
+          }
           return (
             <div key={i} className="chat">
               <div className="msg me fade">
@@ -194,13 +198,55 @@ export function Need({
               </div>
               {r.reply && q && (
                 <Ai>
-                  <span className="who">ИИ-агент</span>
+                  <AiWho />
                   {r.reply.pool_late && !r.reply.missing.length
                     ? `Ближайший пул привезёт товар ${r.reply.pool_late.delivery_text}, это позже вашего срока (${r.reply.spec.due_text}). Если можно подождать, напишите новый срок, например «до ${r.reply.pool_late.delivery_text}».`
                     : r.reply.question}
                 </Ai>
               )}
-              {r.reply && !q && <Complete r={r.reply} step={step} first={firstComplete} />}
+              {i === firstDone && card && (
+                <>
+                  {step >= 1 && (
+                    <Ai>
+                      <AiWho />
+                      Понял! Вот ваша заявка на языке биржи:
+                    </Ai>
+                  )}
+                  {step >= 2 && (
+                    <Ai wide>
+                      <div className="spec-head">
+                        <Wheat />
+                        <h2>Ваша заявка</h2>
+                      </div>
+                      <dl className="spec" style={{ marginTop: 12 }}>
+                        {(Object.keys(LABELS) as SpecKey[]).map((k) =>
+                          card[k] ? (
+                            <div key={k} style={{ display: 'contents' }}>
+                              <dt>{LABELS[k]}</dt>
+                              {/* key с текстом: поле изменилось — элемент новый, подсветка запускается заново */}
+                              <dd key={card[k]} data-k={k} className={changed.has(k) ? 'changed' : undefined}>
+                                {card[k]}
+                              </dd>
+                            </div>
+                          ) : null,
+                        )}
+                      </dl>
+                      {latestDone?.source === 'template' && (
+                        <p className="src" style={{ marginTop: 10 }}>
+                          Разобрано правилами без ИИ: Claude сейчас недоступен
+                        </p>
+                      )}
+                    </Ai>
+                  )}
+                  {step >= 3 && r.reply && (
+                    <Ai>
+                      <AiWho />
+                      {poolText(r.reply)}
+                    </Ai>
+                  )}
+                </>
+              )}
+              {update}
               {isLast && !r.reply && !error && (
                 <Ai>
                   <Typing />
@@ -210,34 +256,40 @@ export function Need({
           )
         })}
         {error && <ErrorNote error={error} onRetry={() => setAttempt((a) => a + 1)} />}
-        <div ref={end} />
       </div>
 
-      <ActionBar>
-        <div className="composer reply">
-          <textarea
-            ref={input}
-            rows={1}
-            aria-label="Сообщение агенту"
-            enterKeyHint="send"
-            placeholder={ask ? 'Ваш ответ' : 'Что-то поменять?'}
-            value={answer}
-            disabled={!reply}
-            onChange={(e) => setAnswer(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter' && !e.shiftKey) {
-                e.preventDefault()
-                sendAnswer()
-              }
-            }}
-          />
-          <button className={`btn sm${complete && pool ? ' ghost' : ''}`} type="button" onClick={sendAnswer} disabled={!answer.trim() || !reply}>
-            Отправить
-          </button>
+      {reply && (firstDone < 0 || shown >= 3) && (
+        <div className="reply-wrap fade">
+          <div className="composer reply">
+            <textarea
+              ref={input}
+              rows={1}
+              aria-label="Сообщение для Davra"
+              enterKeyHint="send"
+              placeholder={ask ? 'Ваш ответ' : 'Что поменять в заявке?'}
+              value={answer}
+              onChange={(e) => setAnswer(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && !e.shiftKey) {
+                  e.preventDefault()
+                  sendAnswer()
+                }
+              }}
+            />
+            <button className="send-ic" type="button" aria-label="Отправить" onClick={sendAnswer} disabled={!answer.trim()}>
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <path d="M12 19V5M5.5 11.5L12 5l6.5 6.5" />
+              </svg>
+            </button>
+          </div>
         </div>
+      )}
+      <div ref={end} />
+
+      <ActionBar>
         {complete && pool && shown >= 3 && (
           <button className="btn fade" type="button" onClick={onShowPool}>
-            {pool.joined ? 'К пулу' : 'Показать пул'} <Arrow />
+            {pool.joined ? 'К пулу' : 'Да, показать пул'} <Arrow />
           </button>
         )}
       </ActionBar>

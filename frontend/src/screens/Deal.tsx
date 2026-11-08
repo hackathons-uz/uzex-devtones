@@ -1,20 +1,20 @@
 import { useEffect, useState, type ReactNode } from 'react'
 import { api, type Deal as DealT } from '../api'
-import { fmt, fmtDec, pct, plural, sleep } from '../format'
-import { ActionBar, Arrow, Check, ErrorNote } from '../components/ui'
+import { fmt, plural, sleep } from '../format'
+import { ActionBar, Arrow, Check, Dr, ErrorNote } from '../components/ui'
 
 /** Шаг 4: сделка. Стадии хранит бэкенд; экран показывает ход эскроу и расчета. */
 export function Deal({
   dealId,
   deal,
-  prevDepositPct,
   onDeal,
+  onSettled,
   onDispute,
 }: {
   dealId: string
   deal: DealT | null
-  prevDepositPct: number | null
   onDeal: (d: DealT) => void
+  onSettled: (d: DealT) => void
   onDispute: () => void
 }) {
   const [error, setError] = useState<string | null>(null)
@@ -47,6 +47,7 @@ export function Deal({
         setVisualStage(4)
         await sleep(900)
         onDeal(d)
+        onSettled(d)
       } else {
         onDeal(await api.openDispute(dealId))
         onDispute()
@@ -71,28 +72,28 @@ export function Deal({
   const shortKg = Math.round(deal.refund_uzs / deal.price_uzs)
   const receiptText =
     deal.status === 'dispute'
-      ? 'Спор открыт. Деньги заморожены в эскроу до решения.'
+      ? 'Спор открыт. Деньги заморожены, пока не решим.'
       : deal.status === 'arbiter'
-        ? 'Спор у арбитра биржи, решение до 48 часов.'
+        ? 'Спор у арбитра, ответ до 48 часов.'
         : deal.refund_uzs > 0
-          ? `Спор закрыт: вы приняли решение, возврат за ${fmt(shortKg)} кг.`
-          : 'Проверьте вес и качество на хабе.'
+          ? `Спор закрыт: вам вернули деньги за ${fmt(shortKg)} кг.`
+          : 'Проверьте вес и качество, когда заберёте.'
   const settleText =
     deal.status !== 'settled'
-      ? 'Деньги уходят продавцу, задаток возвращается вам.'
+      ? 'Продавец получает деньги, вам возвращается задаток.'
       : deal.refund_uzs > 0
         ? `${fmt(deal.to_seller_uzs)} сум переведены продавцу. ${fmt(deal.refund_uzs)} сум и задаток ${fmt(deal.deposit_uzs)} сум вернулись на ваш счёт.`
         : `${fmt(deal.total_uzs)} сум переведены продавцу. Задаток ${fmt(deal.deposit_uzs)} сум вернулся на ваш счёт.`
 
   const steps: { title: string; text: string; act?: ReactNode }[] = [
-    { title: 'Задаток заморожен', text: `${fmt(deal.deposit_uzs)} сум на счёте биржи` },
-    { title: 'Оплата в эскроу', text: `${fmt(deal.total_uzs)} сум. Продавец видит деньги, но не может их получить.` },
+    { title: 'Задаток заморожен', text: `${fmt(deal.deposit_uzs)} сум хранятся у биржи` },
+    { title: 'Оплата на защищённый счёт', text: `${fmt(deal.total_uzs)} сум. Продавец получит их, только когда вы заберёте муку.` },
     {
-      title: 'Отгрузка и деление партии',
-      text: `Вагон идёт на хаб. Биржа делит ${deal.lot_t} т на ${deal.recipients} ${plural(deal.recipients, 'получателя', 'получателей', 'получателей')} и назначает время вывоза.`,
+      title: 'Доставка на склад',
+      text: `Вагон едет на склад. Davra разделит муку на всех (${deal.recipients} ${plural(deal.recipients, 'получатель', 'получателя', 'получателей')}) и скажет, когда забрать.`,
     },
-    { title: 'Подтверждение получения', text: receiptText },
-    { title: 'Расчёт', text: settleText },
+    { title: 'Получение', text: receiptText },
+    { title: 'Готово', text: settleText },
   ]
 
   let actions: ReactNode = null
@@ -106,7 +107,7 @@ export function Deal({
     actions = (
       <>
         <button className="btn" type="button" onClick={() => act('confirm')} disabled={busy}>
-          Получил, всё в порядке
+          Забрал, всё ок
         </button>
         <button className="btn outline" type="button" onClick={() => act('dispute')} disabled={busy}>
           Открыть спор
@@ -133,12 +134,13 @@ export function Deal({
             <dt>Товар</dt>
             <dd>{deal.product}</dd>
             <dt>Цена</dt>
-            <dd className="num">{fmt(deal.price_uzs)} сум/кг</dd>
+            <dd className="num">{`${fmt(deal.price_uzs)} сум/кг`}</dd>
             <dt>Сумма</dt>
-            <dd className="num">{fmt(deal.total_uzs)} сум</dd>
+            <dd className="num">{`${fmt(deal.total_uzs)} сум`}</dd>
             <dt>Продавец</dt>
             <dd>
-              {deal.seller.name}, рейтинг {fmtDec(deal.seller.rating)}
+              {deal.seller.name}
+              <Dr value={deal.seller.rating} kind="seller" />
             </dd>
             <dt>Доставка</dt>
             <dd>
@@ -160,19 +162,6 @@ export function Deal({
           </ol>
         </div>
       </div>
-      {deal.rating_change && (
-        <div className="card inverse fade">
-          <h2>{deal.rating_change.after > deal.rating_change.before ? 'Ваш рейтинг вырос' : 'Ваш рейтинг'}</h2>
-          <div className="big">
-            {deal.rating_change.after}
-            <small>было {deal.rating_change.before}</small>
-          </div>
-          <p>
-            Задаток в следующих пулах: {pct(deal.rating_change.next_deposit_pct)}
-            {prevDepositPct !== null && prevDepositPct !== deal.rating_change.next_deposit_pct && ` вместо ${pct(prevDepositPct)}`}. Честная работа делает вход на биржу дешевле.
-          </p>
-        </div>
-      )}
       <ActionBar>{actions}</ActionBar>
     </section>
   )
