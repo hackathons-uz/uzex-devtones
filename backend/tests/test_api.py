@@ -14,7 +14,15 @@ def test_need_full_request(client):
     assert r["spec"]["product"] == "Мука пшеничная, высший сорт, ГОСТ 26574"
     assert (r["spec"]["qty_t"], r["spec"]["due_text"], r["spec"]["due_source"]) == (2, "25 ноября", "given")
     assert r["spec"]["hub"] == "Самарканд, склад «Север»" and r["spec"]["budget_uzs"] == 4600
-    assert r["pool"] == {"id": POOL, "members": 36, "lot_t": 60, "lot_unit": "вагон", "joined": False}
+    assert r["pool"] == {
+        "id": POOL,
+        "members": 36,
+        "lot_t": 60,
+        "lot_unit": "вагон",
+        "lot_unit_ins": "вагонами",
+        "who": "пекарен",
+        "joined": False,
+    }
 
 
 def test_need_asks_missing_due_then_qty(client):
@@ -45,7 +53,7 @@ def test_need_past_or_early_due(client):
 
 
 def test_need_unknown_product(client):
-    r = _need(client, "цемент 20 т до 30 ноября")
+    r = _need(client, "золото 20 т до 30 ноября")
     assert r["pool"] is None and r["missing"] == ["product"]
 
 
@@ -165,3 +173,23 @@ def test_no_offer_without_history_or_after_join(client):
     with db.session() as conn:
         conn.execute("UPDATE business SET purchases='[]'")
     assert client.get("/offer").json() is None
+
+
+def test_any_product_gets_own_pool(client):
+    r = _need(client, "5 т цемента М500 в Ташкент до 30 ноября")
+    assert r["missing"] == [] and r["pool"]["id"] == "cement-tashkent-2611" and r["pool"]["who"] in ("стройкомпании", "стройкомпаний")
+    assert r["spec"]["product"] == "Цемент, М500, ГОСТ 31108"
+    # Поменяли объем до вступления — пул собирается заново под новую долю.
+    r = _need(client, "5 т цемента М500 в Ташкент до 30 ноября", "давай 7 т", asked=[None])
+    pid = r["pool"]["id"]
+    j = client.post(f"/pools/{pid}/join", json={"qty_t": 7}).json()
+    assert j["pool"]["status"] == "filled"
+    a = client.get(f"/pools/{pid}/auction").json()
+    assert a["final_price"] == 1120 and a["dropped_count"] == 2 and len(a["excluded"]) == 1
+    deal = a["deal_id"]
+    client.post(f"/deals/{deal}/pay")
+    client.post(f"/deals/{deal}/dispute")
+    s = client.get(f"/deals/{deal}/dispute").json()
+    assert s["decision"]["shortfall_kg"] == 210 and s["decision"]["refund_uzs"] == 210 * 1120 and s["decision"]["fault"] == "hub"
+    d = _need(client, "дизель 10 тонн в Бухару, срок не важен")
+    assert d["pool"]["id"] == "diesel-bukhara-2611" and d["pool"]["lot_unit"] == "цистерна"

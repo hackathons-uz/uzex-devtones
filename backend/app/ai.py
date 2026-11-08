@@ -33,7 +33,11 @@ SYSTEM_AUCTION = (
 SYSTEM_NEED = (
     "Ты разбираешь заявку малого бизнеса на закупку, написанную своими словами по-русски или по-узбекски. "
     "Заполняй только то, что прямо сказано в тексте; остальное оставь null. "
-    "product: flour — любая мука (un). grade: top — высший сорт (в/с, oliy nav). "
+    "product — ключ товара из каталога: flour мука (un), sugar сахар (shakar), cement цемент (sement), "
+    "diesel дизельное топливо (солярка, dizel), wheat пшеница (bug‘doy), rice рис (guruch), oil масло подсолнечное (yog‘), "
+    "rebar арматура; если товара нет в каталоге — null. grade: top — высший сорт муки (в/с, oliy nav), "
+    "m500 и m400 — марки цемента, euro5 — дизель Евро-5; иначе null. "
+    "city: samarkand, tashkent, bukhara, fergana, andijan, namangan, navoi, karshi, nukus или null. "
     "qty_t — объем в тоннах (2000 кг = 2). due_day и due_month — срок «до какого числа»; "
     "относительный срок («через неделю», «к пятнице») переведи в число и месяц от сегодняшней даты. "
     "due_flexible — true, только если покупатель прямо сказал, что срок не важен. "
@@ -43,10 +47,20 @@ SYSTEM_NEED = (
 NEED_SCHEMA = {
     "type": "object",
     "properties": {
-        "product": {"anyOf": [{"type": "string", "enum": ["flour"]}, {"type": "null"}]},
-        "grade": {"anyOf": [{"type": "string", "enum": ["top"]}, {"type": "null"}]},
+        "product": {
+            "anyOf": [{"type": "string", "enum": ["flour", "sugar", "cement", "diesel", "wheat", "rice", "oil", "rebar"]}, {"type": "null"}]
+        },
+        "grade": {"anyOf": [{"type": "string", "enum": ["top", "m500", "m400", "euro5"]}, {"type": "null"}]},
         "qty_t": {"type": ["number", "null"]},
-        "city": {"anyOf": [{"type": "string", "enum": ["samarkand", "tashkent"]}, {"type": "null"}]},
+        "city": {
+            "anyOf": [
+                {
+                    "type": "string",
+                    "enum": ["samarkand", "tashkent", "bukhara", "fergana", "andijan", "namangan", "navoi", "karshi", "nukus"],
+                },
+                {"type": "null"},
+            ]
+        },
         "due_day": {"type": ["integer", "null"]},
         "due_month": {"type": ["integer", "null"]},
         "due_flexible": {"type": "boolean"},

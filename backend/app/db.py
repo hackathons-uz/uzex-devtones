@@ -37,7 +37,9 @@ CREATE TABLE IF NOT EXISTS pool (
   avg_exchange_uzs INTEGER NOT NULL,
   avg_month TEXT NOT NULL,
   retail_uzs INTEGER NOT NULL,
-  status TEXT NOT NULL CHECK (status IN ('collecting','filled'))
+  status TEXT NOT NULL CHECK (status IN ('collecting','filled')),
+  deal_id TEXT NOT NULL,             -- номер сделки покупателя в этом пуле
+  generated INTEGER NOT NULL DEFAULT 0 -- 1: пул создан под заявку, его можно пересобрать под новый объем
 );
 CREATE TABLE IF NOT EXISTS pool_member (
   id INTEGER PRIMARY KEY AUTOINCREMENT,

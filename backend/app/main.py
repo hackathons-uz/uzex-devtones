@@ -6,6 +6,7 @@ import os
 import sqlite3
 from collections.abc import Iterator
 from datetime import date
+from typing import Annotated
 
 from fastapi import Depends, FastAPI, Request
 from fastapi.exceptions import RequestValidationError
@@ -13,7 +14,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
-from . import ai, db, need, seed, stt
+from . import ai, db, need, pools, seed, stt
 from . import config as C
 from . import formulas as F
 from .env import load_env
@@ -221,9 +222,10 @@ async def speech_to_text(request: Request):
 
 class NeedIn(BaseModel):
     # Первое сообщение и ответы на уточняющие вопросы, по порядку.
-    messages: list[str] = Field(min_length=1, max_length=8)
+    # До 30 сообщений по 500 знаков: защита от огромных запросов к Claude, обычному чату хватает с запасом.
+    messages: list[Annotated[str, Field(max_length=500)]] = Field(min_length=1, max_length=30)
     # На какой вопрос отвечает каждое сообщение (у первого — None): «2» в ответ на вопрос об объеме — это 2 т.
-    asked: list[str | None] = Field(default_factory=list, max_length=8)
+    asked: list[str | None] = Field(default_factory=list, max_length=30)
 
 
 @app.post("/need")
@@ -236,7 +238,7 @@ def parse_need(body: NeedIn, conn=Depends(get_conn)):
     if not msgs:
         raise ApiError(422, "empty", "Напишите, что нужно")
     asked = (body.asked + [None] * len(body.messages))[: len(body.messages)]
-    pairs = [(x.strip()[:500], a) for x, a in zip(body.messages, asked, strict=True) if x.strip()]
+    pairs = [(x.strip(), a) for x, a in zip(body.messages, asked, strict=True) if x.strip()]
     by_code = need.parse_dialog([p[0] for p in pairs], [p[1] for p in pairs])
     # Для Claude ответ идет вместе с вопросом, на который он отвечает.
     lines = [f"(ответ на вопрос «{need.QUESTIONS[a]}») {x}" if a in need.QUESTIONS else x for x, a in pairs]
@@ -269,7 +271,10 @@ def parse_need(body: NeedIn, conn=Depends(get_conn)):
     city = need.CITIES.get(parsed["city"] or "") or need.CITIES[b["city"]]
     city_key = parsed["city"] or b["city"]
     spec = {
-        "product": product["name"] + (", " + product["grades"][parsed["grade"]][0] if parsed["grade"] else "") + ", " + product["standard"]
+        "product": product["name"]
+        + (", " + product["grades"][parsed["grade"]][0] if parsed["grade"] in product["grades"] else "")
+        + ", "
+        + product["standard"]
         if product
         else None,
         "qty_t": _fmt_t(parsed["qty_t"]) if parsed["qty_t"] else None,
@@ -290,6 +295,13 @@ def parse_need(body: NeedIn, conn=Depends(get_conn)):
             "(SELECT pool_id FROM pool_member WHERE business_id=?))",
             (parsed["product"], city_key, seed.BUSINESS_ID),
         ).fetchone()
+        # Пул создан под прошлую заявку с другим объемом и вы в нем еще не состоите — собираем заново.
+        if row and row["generated"] and not _you(conn, row["id"]) and not pools.fits(conn, row["id"], parsed["qty_t"]):
+            pools.delete(conn, row["id"])
+            row = None
+        # Открытого пула нет — биржа собирает его под заявку.
+        if not row and (pid := pools.create(conn, parsed["product"], parsed["grade"], city_key, parsed["qty_t"])):
+            row = _pool_row(conn, pid)
         if row and date.fromisoformat(row["delivery_date"]) > due_date and not _you(conn, row["id"]):
             # Пул привезет позже, чем нужно покупателю: предлагать его нельзя.
             late = {"delivery_text": F.date_ru(date.fromisoformat(row["delivery_date"]))}
@@ -301,6 +313,8 @@ def parse_need(body: NeedIn, conn=Depends(get_conn)):
                 "members": members,
                 "lot_t": row["lot_t"],
                 "lot_unit": row["lot_unit"],
+                "lot_unit_ins": need.PRODUCTS[row["product"]]["lot"][1],
+                "who": F.plural(members, *need.PRODUCTS[row["product"]]["who"]),
                 "joined": _you(conn, row["id"]) is not None,
             }
     db.log(conn, "need", {"messages": msgs, "source": source, "spec": spec, "missing": missing, "pool": pool and pool["id"]})
@@ -458,7 +472,7 @@ def get_auction(pool_id: str, conn=Depends(get_conn)):
         conn.execute(
             "INSERT INTO deal (id, pool_id, business_id, seller_id, qty_kg, price_uzs, deposit_uzs, stage, status) VALUES (?,?,?,?,?,?,?,?,?)",
             (
-                seed.DEAL_ID,
+                p["deal_id"],
                 pool_id,
                 seed.BUSINESS_ID,
                 r["winner"]["id"],
@@ -480,7 +494,7 @@ def get_auction(pool_id: str, conn=Depends(get_conn)):
         "below_avg_pct": avg_pct,
         "retail_uzs": p["retail_uzs"],
         "explain": {"points": points, "source": source},
-        "deal_id": seed.DEAL_ID if you else None,
+        "deal_id": p["deal_id"] if you else None,
     }
 
 

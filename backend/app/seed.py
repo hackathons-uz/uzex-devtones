@@ -35,7 +35,7 @@ def seed(conn: sqlite3.Connection) -> None:
         ),
     )
     conn.execute(
-        "INSERT INTO pool VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        "INSERT INTO pool VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
         (
             POOL_ID,
             "flour",
@@ -52,6 +52,8 @@ def seed(conn: sqlite3.Connection) -> None:
             "октябрь",
             5200,
             "collecting",
+            DEAL_ID,
+            0,
         ),
     )
     # 36 покупателей уже в пуле на 50 т: храним одной строкой, по отдельности они в демо не нужны.
