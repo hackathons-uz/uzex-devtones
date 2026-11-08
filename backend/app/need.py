@@ -159,6 +159,26 @@ def resolve_due(due: tuple[int, int] | None, flexible: bool, today: date = C.DEM
     return d, "given"
 
 
+# Части общего вопроса, когда не хватает сразу нескольких полей.
+PARTS = {
+    "product": "какой товар нужен (в демо есть мука)",
+    "qty_t": "сколько нужно — в тоннах или килограммах",
+    "due": "к какому числу нужна поставка (если срок не важен, так и напишите)",
+    "past": "к какому числу нужна поставка — названная дата уже прошла",
+}
+
+
+def question(missing: list[str], due_past: bool) -> str | None:
+    """Один вопрос сразу обо всем, чего не хватает. Одно поле — короткий вопрос, несколько — список."""
+    if not missing:
+        return None
+    keys = ["past" if k == "due" and due_past else k for k in missing]
+    if len(keys) == 1:
+        return QUESTIONS[keys[0]]
+    parts = [PARTS[k] for k in keys]
+    return "Уточните, пожалуйста: " + ", ".join(parts[:-1]) + " и " + parts[-1] + "."
+
+
 QUESTIONS = {
     "product": "Какой товар нужен? Сейчас в демо на бирже есть мука.",
     "qty_t": "Сколько нужно? Можно в тоннах или килограммах.",

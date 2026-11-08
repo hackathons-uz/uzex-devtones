@@ -19,7 +19,11 @@ def test_need_full_request(client):
 
 def test_need_asks_missing_due_then_qty(client):
     r = _need(client, "мука в Самарканд")
-    assert r["missing"] == ["qty_t", "due"] and r["question"].startswith("Сколько нужно") and r["pool"] is None
+    assert r["missing"] == ["qty_t", "due"] and r["pool"] is None
+    assert r["question"] == (
+        "Уточните, пожалуйста: сколько нужно — в тоннах или килограммах "
+        "и к какому числу нужна поставка (если срок не важен, так и напишите)."
+    )
     r = _need(client, "мука в Самарканд", "2", asked=["qty_t"])
     assert r["missing"] == ["due"] and r["spec"]["qty_t"] == 2
     r = _need(client, "мука в Самарканд", "2", "через неделю", asked=["qty_t", "due"])

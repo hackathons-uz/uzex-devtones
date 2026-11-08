@@ -264,9 +264,7 @@ def parse_need(body: NeedIn, conn=Depends(get_conn)):
     missing = [k for k in ("product", "qty_t") if not parsed[k] or (k == "qty_t" and parsed[k] <= 0)]
     if due_source in ("missing", "past"):
         missing.append("due")
-    question = None
-    if missing:
-        question = need.QUESTIONS["past" if missing[0] == "due" and due_source == "past" else missing[0]]
+    question = need.question(missing, due_source == "past")
     product = need.PRODUCTS.get(parsed["product"] or "")
     city = need.CITIES.get(parsed["city"] or "") or need.CITIES[b["city"]]
     city_key = parsed["city"] or b["city"]
