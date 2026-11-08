@@ -1,0 +1,19 @@
+# Render Blueprint: бэкенд FastAPI на бесплатном тарифе.
+# Render → New → Blueprint → этот репозиторий. Секреты (sync: false) Render спросит при создании.
+services:
+  - type: web
+    name: davra-api
+    runtime: python
+    plan: free
+    rootDir: backend
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /health
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.13.5
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      # Адрес фронтенда на Vercel, например https://davra.vercel.app (через запятую, если несколько)
+      - key: CORS_ORIGINS
+        sync: false
